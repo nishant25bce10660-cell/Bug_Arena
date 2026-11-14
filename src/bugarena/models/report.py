@@ -16,3 +16,4 @@ class FixReport(BaseModel):
     champion_eval: PatchEvaluation | None = None
     summary_markdown: str
     git_patch_diff: str
+    report_file_path: str | None = None

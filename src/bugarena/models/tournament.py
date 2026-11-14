@@ -5,6 +5,8 @@ from collections.abc import Sequence
 from pydantic import BaseModel, ConfigDict, Field
 
 from bugarena.models.agent import CandidatePatch
+from bugarena.models.bug import BugSpec
+from bugarena.models.repro import ReproTestSpec
 
 
 class PatchEvaluation(BaseModel):
@@ -34,3 +36,7 @@ class TournamentRecord(BaseModel):
     candidates: Sequence[CandidatePatch] = Field(default_factory=tuple)
     evaluations: Sequence[PatchEvaluation] = Field(default_factory=tuple)
     champion_candidate_id: str | None = None
+    bug_spec: BugSpec | None = None
+    repro_spec: ReproTestSpec | None = None
+    bug_description: str | None = None
+    report_file_path: str | None = None

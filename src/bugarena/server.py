@@ -3,6 +3,7 @@
 import threading
 import uuid
 from collections import OrderedDict
+from pathlib import Path
 from typing import Any
 
 from mcp.server.mcpserver import MCPServer
@@ -11,11 +12,15 @@ from bugarena.config import load_env_file
 from bugarena.discovery.engine import BugDiscoveryEngine
 from bugarena.evaluation.test_runner import PatchEvaluator
 from bugarena.models.agent import CandidatePatch, PersonaType
-from bugarena.models.bug import SuspectLocation
+from bugarena.models.bug import BugSpec, SuspectLocation
 from bugarena.models.report import FixReport
 from bugarena.models.repro import ReproTestSpec
 from bugarena.models.tournament import TournamentRecord
-from bugarena.reporting.markdown_formatter import format_markdown_report
+from bugarena.reporting.markdown_formatter import (
+    format_bug_diagnostic_markdown,
+    format_markdown_report,
+    save_markdown_report,
+)
 from bugarena.synthesizer.red_validator import ReproductionFalsePositiveError, validate_red_baseline
 from bugarena.synthesizer.test_generator import generate_reproduction_test_code
 from bugarena.tournament.patch_parser import PatchValidationError, parse_and_validate_patch
@@ -30,6 +35,7 @@ MAX_REGISTRY_SIZE = 100
 _REGISTRY_LOCK = threading.Lock()
 _TOURNAMENT_REGISTRY: OrderedDict[str, TournamentRecord] = OrderedDict()
 _REPRO_REGISTRY: OrderedDict[str, ReproTestSpec] = OrderedDict()
+_BUG_REGISTRY: OrderedDict[str, BugSpec] = OrderedDict()
 
 
 def _store_tournament(t_id: str, tournament: TournamentRecord) -> None:
@@ -44,6 +50,13 @@ def _store_repro(test_rel_path: str, spec: ReproTestSpec) -> None:
         _REPRO_REGISTRY[test_rel_path] = spec
         if len(_REPRO_REGISTRY) > MAX_REGISTRY_SIZE:
             _REPRO_REGISTRY.popitem(last=False)
+
+
+def _store_bug(bug_id: str, spec: BugSpec) -> None:
+    with _REGISTRY_LOCK:
+        _BUG_REGISTRY[bug_id] = spec
+        if len(_BUG_REGISTRY) > MAX_REGISTRY_SIZE:
+            _BUG_REGISTRY.popitem(last=False)
 
 
 @mcp.tool()
@@ -66,6 +79,7 @@ def bug_detect(
     bug_spec = engine.discover_from_trace(
         error_log=bounded_error_log, hint=hint or None, max_candidates=bounded_max
     )
+    _store_bug(bug_spec.bug_id, bug_spec)
     return {
         "bug_id": bug_spec.bug_id,
         "repo_path": bug_spec.repo_path,
@@ -165,12 +179,16 @@ def agent_fix_tournament(
                 "error": f"Invalid diff syntax in candidate '{item.get('candidate_id')}': {err}"
             }
 
+    with _REGISTRY_LOCK:
+        linked_repro = _REPRO_REGISTRY.get(repro_test_file)
+
     tournament = TournamentRecord(
         tournament_id=tournament_id,
         repo_path=repo_path,
         candidates=candidates,
         evaluations=[],
         champion_candidate_id=None,
+        repro_spec=linked_repro,
     )
     _store_tournament(tournament_id, tournament)
 
@@ -213,6 +231,9 @@ def evaluate_patches(
         candidates=tournament.candidates,
         evaluations=evaluations,
         champion_candidate_id=champion_id,
+        bug_spec=tournament.bug_spec,
+        repro_spec=tournament.repro_spec or repro_spec,
+        bug_description=tournament.bug_description,
     )
     _store_tournament(tournament_id, updated_tournament)
 
@@ -227,9 +248,11 @@ def evaluate_patches(
 def generate_fix_report(
     tournament_id: str,
     format: str = "markdown",
+    output_file: str = "",
 ) -> dict[str, Any]:
     """
-    Generate an actionable tournament diagnostic report and git patch.
+    Generate an actionable tournament diagnostic report and git patch,
+    and save the report to a markdown (.md) file on disk.
     """
     with _REGISTRY_LOCK:
         tournament = _TOURNAMENT_REGISTRY.get(tournament_id)
@@ -248,11 +271,19 @@ def generate_fix_report(
             None,
         )
 
+    # Save to disk as an .md file
+    out_path = output_file
+    if not out_path:
+        out_path = str(Path(tournament.repo_path) / "reports" / f"bug_report_{tournament.tournament_id}.md")
+
+    saved_path = save_markdown_report(report_md, out_path)
+
     fix_report = FixReport(
         tournament_id=tournament.tournament_id,
         champion_candidate_id=tournament.champion_candidate_id,
         summary_markdown=report_md,
         git_patch_diff=champion_patch or "",
+        report_file_path=str(saved_path),
     )
 
     if format == "json":
@@ -261,18 +292,69 @@ def generate_fix_report(
             "champion_candidate_id": tournament.champion_candidate_id,
             "evaluations": [e.model_dump() for e in tournament.evaluations],
             "champion_diff": champion_patch,
+            "report_file_path": str(saved_path),
             "report": fix_report.model_dump(),
         }
     elif format == "diff":
-        return {"diff": champion_patch or "", "git_patch_diff": champion_patch or ""}
+        return {
+            "diff": champion_patch or "",
+            "git_patch_diff": champion_patch or "",
+            "report_file_path": str(saved_path),
+        }
     else:
         return {
             "report_markdown": report_md,
             "summary_markdown": report_md,
             "champion_diff": champion_patch or "",
             "git_patch_diff": champion_patch or "",
+            "report_file_path": str(saved_path),
             "report": fix_report.model_dump(),
         }
+
+
+@mcp.tool()
+def generate_bug_report(
+    repo_path: str,
+    error_log: str,
+    bug_description: str = "",
+    hint: str = "",
+    output_file: str = "",
+) -> dict[str, Any]:
+    """
+    Generate and save a standalone markdown (.md) diagnostic report of a detected bug,
+    including suspect code locations, AST analysis, and stack trace.
+    """
+    engine = BugDiscoveryEngine(repo_path)
+    bug_spec = engine.discover_from_trace(error_log=error_log, hint=hint or None)
+    _store_bug(bug_spec.bug_id, bug_spec)
+
+    repro_spec = None
+    with _REGISTRY_LOCK:
+        for r in _REPRO_REGISTRY.values():
+            if r.test_file_path.startswith(repo_path) or repo_path in r.test_file_path:
+                repro_spec = r
+                break
+
+    report_md = (
+        f"# Bug Diagnostic Report\n"
+        f"**Bug ID**: `{bug_spec.bug_id}`  \n"
+        f"**Repository**: `{bug_spec.repo_path}`  \n\n"
+    )
+    report_md += format_bug_diagnostic_markdown(
+        bug_spec=bug_spec,
+        repro_spec=repro_spec,
+        bug_description=bug_description,
+    )
+
+    out_path = output_file or str(Path(repo_path) / "reports" / f"bug_report_{bug_spec.bug_id}.md")
+    saved_path = save_markdown_report(report_md, out_path)
+
+    return {
+        "bug_id": bug_spec.bug_id,
+        "report_markdown": report_md,
+        "report_file_path": str(saved_path),
+        "suspects": [s.model_dump() for s in bug_spec.suspects],
+    }
 
 
 @mcp.tool()
@@ -284,6 +366,7 @@ def bugarena_autonomous_repair(
     hint: str = "",
     call_expr: str = "",
     expected_behavior: str = "",
+    output_report_file: str = "",
 ) -> dict[str, Any]:
     """
     Composite end-to-end autonomous repair workflow:
@@ -328,6 +411,22 @@ def bugarena_autonomous_repair(
         return tourn_res
     t_id = tourn_res["tournament_id"]
 
+    # Enrich tournament record with bug and repro specs for comprehensive reporting
+    with _REGISTRY_LOCK:
+        existing_t = _TOURNAMENT_REGISTRY.get(t_id)
+        if existing_t:
+            updated_t = TournamentRecord(
+                tournament_id=existing_t.tournament_id,
+                repo_path=existing_t.repo_path,
+                candidates=existing_t.candidates,
+                evaluations=existing_t.evaluations,
+                champion_candidate_id=existing_t.champion_candidate_id,
+                bug_spec=_BUG_REGISTRY.get(detect_res["bug_id"]),
+                repro_spec=_REPRO_REGISTRY.get(test_rel_path),
+                bug_description=bounded_desc,
+            )
+            _TOURNAMENT_REGISTRY[t_id] = updated_t
+
     # 4. Evaluation
     eval_res = evaluate_patches(
         repo_path=repo_path,
@@ -339,14 +438,17 @@ def bugarena_autonomous_repair(
         return eval_res
 
     # 5. Report
-    report_res = generate_fix_report(t_id, format="markdown")
+    report_res = generate_fix_report(t_id, format="markdown", output_file=output_report_file)
 
     return {
         "tournament_id": t_id,
         "champion_candidate_id": eval_res["champion_candidate_id"],
         "leaderboard": eval_res["leaderboard"],
         "report_markdown": report_res["report_markdown"],
+        "summary_markdown": report_res["summary_markdown"],
         "champion_diff": report_res["champion_diff"],
+        "git_patch_diff": report_res["git_patch_diff"],
+        "report_file_path": report_res["report_file_path"],
     }
 
 

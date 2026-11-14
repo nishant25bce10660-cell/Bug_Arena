@@ -19,7 +19,7 @@ async def test_tournament_runner_concurrent_success():
     repro_spec = ReproTestSpec(
         test_file_path="tests/test_calc.py",
         test_code="def test_zero(): assert divide(1, 0) == 0",
-        expected_failure_type="ZeroDivisionError",
+        expected_exception="ZeroDivisionError",
         red_baseline_verified=True,
     )
 
@@ -64,7 +64,7 @@ async def test_tournament_runner_handles_failures_gracefully():
     repro_spec = ReproTestSpec(
         test_file_path="tests/test_val.py",
         test_code="def test_val(): pass",
-        expected_failure_type="ValueError",
+        expected_exception="ValueError",
         red_baseline_verified=True,
     )
 
