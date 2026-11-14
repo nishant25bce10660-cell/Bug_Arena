@@ -6,6 +6,7 @@ from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
+from bugarena.config import load_env_file
 from bugarena.discovery.engine import BugDiscoveryEngine
 from bugarena.evaluation.test_runner import PatchEvaluator
 from bugarena.models.agent import CandidatePatch, PersonaType
@@ -16,6 +17,9 @@ from bugarena.reporting.markdown_formatter import format_markdown_report
 from bugarena.synthesizer.red_validator import ReproductionFalsePositiveError, validate_red_baseline
 from bugarena.synthesizer.test_generator import generate_reproduction_test_code
 from bugarena.tournament.patch_parser import parse_and_validate_patch
+
+# Load .env file if present
+load_env_file()
 
 mcp = MCPServer("bugarena")
 

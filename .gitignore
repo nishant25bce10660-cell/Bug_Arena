@@ -35,5 +35,6 @@ htmlcov/
 *.swo
 
 # Project Temporary
+.env
 workspace_temp/
 tests/repro_temp/
