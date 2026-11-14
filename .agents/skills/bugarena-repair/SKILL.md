@@ -29,8 +29,9 @@ Ensure the `bugarena` MCP server is active in `mcp_config.json`. The server expo
 - `bug_reproduce`: Synthesizes a minimal pytest case and asserts the **Red baseline** (must fail on unpatched code).
 - `agent_fix_tournament`: Registers candidate patches from distinct agent personas.
 - `evaluate_patches`: Applies each patch in an ephemeral sandbox, executes reproduction + regression tests, and scores accuracy.
-- `generate_fix_report`: Produces a comparative leaderboard and git-apply patch.
-- `bugarena_autonomous_repair`: Executes the entire 5-stage tournament end-to-end.
+- `generate_fix_report`: Produces a comparative leaderboard and git-apply patch, saving a complete `.md` report to disk.
+- `generate_bug_report`: Generates and saves a standalone `.md` diagnostic report containing the bug description, suspects, and reproduction test.
+- `bugarena_autonomous_repair`: Executes the entire 5-stage tournament end-to-end and saves the `.md` report.
 
 ---
 
