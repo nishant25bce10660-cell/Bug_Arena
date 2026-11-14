@@ -18,7 +18,19 @@ BLOCKED_ENV_SUBSTRINGS = (
     "AUTH",
     "PRIVATE",
     "SIGNATURE",
+    "URL",
+    "DSN",
+    "CONNECTION",
+    "PASS",
 )
+
+BLOCKED_ENV_EXACT = {
+    "DATABASE_URL",
+    "SENTRY_DSN",
+    "STRIPE_SK",
+    "MONGO_URI",
+    "REDIS_URL",
+}
 
 DANGEROUS_SHELL_PATTERNS = re.compile(r"[;&|`$><]")
 
@@ -50,14 +62,16 @@ def validate_safe_path(base_dir: Path | str, target_path: str) -> Path:
 
 def sanitize_env(base_env: Mapping[str, str]) -> dict[str, str]:
     """
-    Create a sanitized copy of environment variables, stripping secrets and tokens.
+    Create a sanitized copy of environment variables, stripping secrets, URLs, and tokens.
     """
     clean_env: dict[str, str] = {}
     for key, val in base_env.items():
         key_upper = key.upper()
-        if any(blocked in key_upper for blocked in BLOCKED_ENV_SUBSTRINGS):
+        if key_upper in BLOCKED_ENV_EXACT or any(blocked in key_upper for blocked in BLOCKED_ENV_SUBSTRINGS):
             continue
         clean_env[key] = val
+    clean_env["PYTHONUNBUFFERED"] = "1"
+    clean_env["PYTHONDONTWRITEBYTECODE"] = "1"
     return clean_env
 
 
@@ -85,9 +99,13 @@ def sanitize_command_args(args: Sequence[str]) -> list[str]:
     return sanitized
 
 
-def scrub_sensitive_data(text: str, sensitive_patterns: Sequence[str] | None = None) -> str:
+def scrub_sensitive_data(
+    text: str,
+    sensitive_patterns: Sequence[str] | None = None,
+    base_dir: str | Path | None = None,
+) -> str:
     """
-    Scrub sensitive tokens and strings from raw output or error logs.
+    Scrub sensitive tokens, API keys, URLs, and absolute paths from output or error logs.
     """
     if not text:
         return ""
@@ -95,10 +113,21 @@ def scrub_sensitive_data(text: str, sensitive_patterns: Sequence[str] | None = N
     scrubbed = text
     if sensitive_patterns:
         for pat in sensitive_patterns:
-            if pat:
+            if pat and len(pat) > 3:
                 scrubbed = scrubbed.replace(pat, "[REDACTED]")
 
-    # Also scrub generic API key signatures (Bearer tokens, AWS keys, GitHub tokens, etc.)
+    # Redact provider API keys
     scrubbed = re.sub(r"gh[pousr]_[A-Za-z0-9_]{16,}", "[REDACTED_GITHUB_TOKEN]", scrubbed)
     scrubbed = re.sub(r"sk-[A-Za-z0-9_-]{20,}", "[REDACTED_API_KEY]", scrubbed)
+    scrubbed = re.sub(r"AIza[0-9A-Za-z-_]{35}", "[REDACTED_GEMINI_KEY]", scrubbed)
+    scrubbed = re.sub(r"gsk_[A-Za-z0-9]{48,}", "[REDACTED_GROQ_KEY]", scrubbed)
+    scrubbed = re.sub(r"AKIA[0-9A-Z]{16}", "[REDACTED_AWS_KEY]", scrubbed)
+    scrubbed = re.sub(r"Bearer\s+[A-Za-z0-9_\-\.~+/]+=*", "Bearer [REDACTED_TOKEN]", scrubbed, flags=re.IGNORECASE)
+
+    # Redact absolute paths exposing host user or environment
+    scrubbed = re.sub(r"[a-zA-Z]:\\[Uu]sers\\[^\/\s\\]+", "[REDACTED_PATH]", scrubbed)
+    scrubbed = re.sub(r"/(?:home|Users)/[^/\s]+", "[REDACTED_PATH]", scrubbed)
+    if base_dir:
+        scrubbed = scrubbed.replace(str(base_dir), "[WORKSPACE]")
+
     return scrubbed

@@ -1,6 +1,7 @@
 """Asynchronous tournament coordinator for concurrent candidate generation."""
 
 import asyncio
+import logging
 import uuid
 from collections.abc import Callable, Coroutine, Sequence
 from typing import Any
@@ -10,6 +11,8 @@ from bugarena.models.bug import BugSpec
 from bugarena.models.repro import ReproTestSpec
 from bugarena.tournament.patch_parser import PatchValidationError, parse_and_validate_patch
 from bugarena.tournament.providers.dispatcher import MultiModelDispatcher
+
+logger = logging.getLogger(__name__)
 
 CandidateGenerator = Callable[
     [PersonaType, BugSpec, ReproTestSpec], Coroutine[Any, Any, tuple[str, str]]
@@ -61,15 +64,21 @@ class TournamentRunner:
                     explanation=explanation,
                     protected_paths=protected_paths,
                 )
-            except (TimeoutError, PatchValidationError, OSError):
+            except (TimeoutError, PatchValidationError, OSError) as exc:
+                logger.warning("Persona %s generation rejected: %s", persona.value, exc)
+                return None
+            except Exception:
+                logger.exception("Persona %s generation encountered error", persona.value)
                 return None
 
         tasks = [generate_single(p) for p in self.personas]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         candidates: list[CandidatePatch] = []
-        for res in results:
-            if isinstance(res, CandidatePatch):
+        for p, res in zip(self.personas, results, strict=False):
+            if isinstance(res, Exception):
+                logger.error("Persona %s unhandled exception in gather: %s", p.value, res)
+            elif isinstance(res, CandidatePatch):
                 candidates.append(res)
 
         return tournament_id, candidates

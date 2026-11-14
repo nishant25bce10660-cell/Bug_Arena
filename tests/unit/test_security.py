@@ -62,7 +62,56 @@ def test_sanitize_command_args():
 
 
 def test_scrub_sensitive_data():
-    raw_output = "Error: Authentication failed with token ghp_secret12345678 at host"
+    raw_output = (
+        "Error: Authentication failed with token ghp_secret12345678 at host\n"
+        "Key: AIzaSyD12345678901234567890123456789012\n"
+        "Groq: gsk_123456789012345678901234567890123456789012345678\n"
+        "Bearer: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.t-ID\n"
+        "User file: C:\\Users\\nisha\\AppData\\Local\\secret.py\n"
+    )
     scrubbed = scrub_sensitive_data(raw_output, sensitive_patterns=["ghp_secret12345678"])
     assert "ghp_secret12345678" not in scrubbed
-    assert "[REDACTED]" in scrubbed
+    assert "AIzaSyD" not in scrubbed
+    assert "gsk_12345" not in scrubbed
+    assert "eyJhbGciOi" not in scrubbed
+    assert "nisha" not in scrubbed
+    assert "[REDACTED_GEMINI_KEY]" in scrubbed
+    assert "[REDACTED_GROQ_KEY]" in scrubbed
+    assert "[REDACTED_TOKEN]" in scrubbed
+    assert "[REDACTED_PATH]" in scrubbed
+
+
+def test_sanitize_env_blocks_database_and_dsn():
+    dirty_env = {
+        "PATH": "C:\\Windows\\system32",
+        "DATABASE_URL": "postgresql://user:pass@localhost:5432/db",
+        "SENTRY_DSN": "https://xyz@sentry.io/123",
+        "STRIPE_SK": "sk_live_123456",
+        "PYTHONPATH": "src",
+    }
+    clean = sanitize_env(dirty_env)
+    assert "PATH" in clean
+    assert "PYTHONPATH" in clean
+    assert "DATABASE_URL" not in clean
+    assert "SENTRY_DSN" not in clean
+    assert "STRIPE_SK" not in clean
+    assert clean["PYTHONUNBUFFERED"] == "1"
+    assert clean["PYTHONDONTWRITEBYTECODE"] == "1"
+
+
+def test_docstring_injection_sanitization():
+    from bugarena.models.bug import SuspectLocation
+    from bugarena.synthesizer.test_generator import generate_reproduction_test_code
+
+    suspect = SuspectLocation(
+        file_path="src/main.py",
+        function_name="calc",
+        line_range=(1, 5),
+        code_snippet="def calc(): pass",
+        reasoning="Test",
+        confidence=0.9,
+        bug_type="ZeroDivisionError",
+    )
+    malicious_desc = '"""\nimport os\nos.system("whoami")\n"""'
+    test_code = generate_reproduction_test_code(suspect, malicious_desc)
+    assert 'import os\nos.system("whoami")' not in test_code or r'\"\"\"' in test_code

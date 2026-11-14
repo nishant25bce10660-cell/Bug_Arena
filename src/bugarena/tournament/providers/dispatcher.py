@@ -199,12 +199,15 @@ class MultiModelDispatcher:
             "contents": [{"role": "user", "parts": [{"text": full_content}]}],
             "generationConfig": {"temperature": 0.2, "maxOutputTokens": 2048},
         }
-        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-            resp = await client.post(url, headers=headers, json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-            text = data["candidates"][0]["content"]["parts"][0]["text"]
-            return extract_diff_and_explanation(text)
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+                resp = await client.post(url, headers=headers, json=payload)
+                resp.raise_for_status()
+                data = resp.json()
+                text = data["candidates"][0]["content"]["parts"][0]["text"]
+                return extract_diff_and_explanation(text)
+        except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
+            return "", f"Gemini API error: {exc}"
 
     async def _call_openai(self, model: str, system: str, user_prompt: str) -> tuple[str, str]:
         api_key = os.environ.get("OPENAI_API_KEY")
@@ -223,14 +226,17 @@ class MultiModelDispatcher:
             ],
             "temperature": 0.2,
         }
-        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-            resp = await client.post(
-                "https://api.openai.com/v1/chat/completions", headers=headers, json=payload
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            text = data["choices"][0]["message"]["content"]
-            return extract_diff_and_explanation(text)
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+                resp = await client.post(
+                    "https://api.openai.com/v1/chat/completions", headers=headers, json=payload
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                text = data["choices"][0]["message"]["content"]
+                return extract_diff_and_explanation(text)
+        except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
+            return "", f"OpenAI API error: {exc}"
 
     async def _call_deepseek(self, model: str, system: str, user_prompt: str) -> tuple[str, str]:
         api_key = os.environ.get("DEEPSEEK_API_KEY")
@@ -249,14 +255,17 @@ class MultiModelDispatcher:
             ],
             "temperature": 0.1,
         }
-        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-            resp = await client.post(
-                "https://api.deepseek.com/chat/completions", headers=headers, json=payload
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            text = data["choices"][0]["message"]["content"]
-            return extract_diff_and_explanation(text)
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+                resp = await client.post(
+                    "https://api.deepseek.com/chat/completions", headers=headers, json=payload
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                text = data["choices"][0]["message"]["content"]
+                return extract_diff_and_explanation(text)
+        except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
+            return "", f"DeepSeek API error: {exc}"
 
     async def _call_groq(self, model: str, system: str, user_prompt: str) -> tuple[str, str]:
         api_key = os.environ.get("GROQ_API_KEY")
@@ -276,14 +285,17 @@ class MultiModelDispatcher:
             ],
             "temperature": 0.2,
         }
-        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-            resp = await client.post(
-                "https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            text = data["choices"][0]["message"]["content"]
-            return extract_diff_and_explanation(text)
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+                resp = await client.post(
+                    "https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                text = data["choices"][0]["message"]["content"]
+                return extract_diff_and_explanation(text)
+        except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
+            return "", f"Groq API error: {exc}"
 
     async def _call_ollama(self, model: str, system: str, user_prompt: str) -> tuple[str, str]:
         clean_model = model.replace("ollama/", "")
@@ -293,19 +305,22 @@ class MultiModelDispatcher:
             "prompt": user_prompt,
             "stream": False,
         }
-        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-            resp = await client.post("http://localhost:11434/api/generate", json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-            text = data.get("response", "")
-            return extract_diff_and_explanation(text)
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+                resp = await client.post("http://localhost:11434/api/generate", json=payload)
+                resp.raise_for_status()
+                data = resp.json()
+                text = data.get("response", "")
+                return extract_diff_and_explanation(text)
+        except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
+            return "", f"Ollama API error: {exc}"
 
     async def _call_anthropic(self, model: str, system: str, user_prompt: str) -> tuple[str, str]:
         api_key = os.environ.get("ANTHROPIC_API_KEY")
         if not api_key:
             # Automatic fallback to Gemini or OpenAI if Claude key not present
             fallback_model = get_recommended_model_for_persona(PersonaType.SURGICAL_MINIMALIST)
-            if "gemini" in fallback_model:
+            if "gemini" in fallback_model or "gemma" in fallback_model:
                 return await self._call_gemini(fallback_model, system, user_prompt)
             return await self._call_openai(fallback_model, system, user_prompt)
 
@@ -320,11 +335,14 @@ class MultiModelDispatcher:
             "system": system,
             "messages": [{"role": "user", "content": user_prompt}],
         }
-        async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-            resp = await client.post(
-                "https://api.anthropic.com/v1/messages", headers=headers, json=payload
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            text = data["content"][0]["text"]
-            return extract_diff_and_explanation(text)
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+                resp = await client.post(
+                    "https://api.anthropic.com/v1/messages", headers=headers, json=payload
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                text = data["content"][0]["text"]
+                return extract_diff_and_explanation(text)
+        except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
+            return "", f"Anthropic API error: {exc}"

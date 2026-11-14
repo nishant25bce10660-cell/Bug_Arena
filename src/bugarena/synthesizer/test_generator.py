@@ -1,8 +1,17 @@
 """Reproduction test generator creating minimal reproducible pytest cases."""
 
+import ast
 import re
 
 from bugarena.models.bug import SuspectLocation
+
+
+def _sanitize_docstring(text: str) -> str:
+    """Sanitize docstring content to prevent triple-quote breakout injection attacks."""
+    if not text:
+        return ""
+    clean = text.replace('"""', r'\"\"\"').replace("'''", r"\'\'\'")
+    return clean.replace("\r", "")
 
 
 def generate_reproduction_test_code(
@@ -15,6 +24,7 @@ def generate_reproduction_test_code(
     Generate an isolated, executable reproduction test script using pytest.
     """
     clean_func = suspect.function_name if suspect.function_name != "<module>" else "target"
+    safe_desc = _sanitize_docstring(bug_description)
 
     # Derive module import path from relative file_path (e.g., src/math/calc.py -> src.math.calc)
     clean_path = suspect.file_path.replace("\\", "/").removesuffix(".py")
@@ -36,13 +46,14 @@ def generate_reproduction_test_code(
         assertion_block = f"    result = {target_call}\n    assert result is not None\n"
 
     code = f'''"""Automated bug reproduction test case.
-Bug description: {bug_description}
+Bug description: {safe_desc}
 Target function: {clean_func} in {suspect.file_path}
 """
 
-import pytest
 import sys
 from pathlib import Path
+
+import pytest
 
 # Ensure workspace root is in sys.path
 root_dir = Path(__file__).resolve().parent.parent
@@ -60,7 +71,14 @@ except ImportError:
 
 
 def {test_name}():
-    """Reproduce defect: {bug_description}"""
+    """Reproduce defect: {safe_desc}"""
 {assertion_block}
 '''
+
+    # Ensure generated code is syntactically valid before returning
+    try:
+        ast.parse(code)
+    except SyntaxError as e:
+        raise ValueError(f"Generated test code failed syntax validation: {e}") from e
+
     return code

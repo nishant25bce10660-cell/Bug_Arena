@@ -1,5 +1,6 @@
 """BugArena MCP Server exposing tools, resources, and repair tournament workflows."""
 
+import threading
 import uuid
 from collections import OrderedDict
 from typing import Any
@@ -11,6 +12,7 @@ from bugarena.discovery.engine import BugDiscoveryEngine
 from bugarena.evaluation.test_runner import PatchEvaluator
 from bugarena.models.agent import CandidatePatch, PersonaType
 from bugarena.models.bug import SuspectLocation
+from bugarena.models.report import FixReport
 from bugarena.models.repro import ReproTestSpec
 from bugarena.models.tournament import TournamentRecord
 from bugarena.reporting.markdown_formatter import format_markdown_report
@@ -23,22 +25,25 @@ load_env_file()
 
 mcp = MCPServer("bugarena")
 
-# Bounded in-memory registries for multi-step tool sessions (max 100 entries to prevent memory leaks)
+# Bounded, thread-safe in-memory registries for multi-step tool sessions (max 100 entries to prevent memory leaks)
 MAX_REGISTRY_SIZE = 100
+_REGISTRY_LOCK = threading.Lock()
 _TOURNAMENT_REGISTRY: OrderedDict[str, TournamentRecord] = OrderedDict()
 _REPRO_REGISTRY: OrderedDict[str, ReproTestSpec] = OrderedDict()
 
 
 def _store_tournament(t_id: str, tournament: TournamentRecord) -> None:
-    _TOURNAMENT_REGISTRY[t_id] = tournament
-    if len(_TOURNAMENT_REGISTRY) > MAX_REGISTRY_SIZE:
-        _TOURNAMENT_REGISTRY.popitem(last=False)
+    with _REGISTRY_LOCK:
+        _TOURNAMENT_REGISTRY[t_id] = tournament
+        if len(_TOURNAMENT_REGISTRY) > MAX_REGISTRY_SIZE:
+            _TOURNAMENT_REGISTRY.popitem(last=False)
 
 
 def _store_repro(test_rel_path: str, spec: ReproTestSpec) -> None:
-    _REPRO_REGISTRY[test_rel_path] = spec
-    if len(_REPRO_REGISTRY) > MAX_REGISTRY_SIZE:
-        _REPRO_REGISTRY.popitem(last=False)
+    with _REGISTRY_LOCK:
+        _REPRO_REGISTRY[test_rel_path] = spec
+        if len(_REPRO_REGISTRY) > MAX_REGISTRY_SIZE:
+            _REPRO_REGISTRY.popitem(last=False)
 
 
 @mcp.tool()
@@ -51,9 +56,15 @@ def bug_detect(
     """
     Analyze error log or stack trace, parse AST, and locate suspect bug positions.
     """
+    if repo_path.startswith("-"):
+        raise ValueError(f"Invalid repo_path: '{repo_path}' cannot start with '-'")
+
+    bounded_error_log = error_log[:65536] if len(error_log) > 65536 else error_log
+    bounded_max = min(max(1, max_candidates), 10)
+
     engine = BugDiscoveryEngine(repo_path)
     bug_spec = engine.discover_from_trace(
-        error_log=error_log, hint=hint or None, max_candidates=max_candidates
+        error_log=bounded_error_log, hint=hint or None, max_candidates=bounded_max
     )
     return {
         "bug_id": bug_spec.bug_id,
@@ -220,7 +231,8 @@ def generate_fix_report(
     """
     Generate an actionable tournament diagnostic report and git patch.
     """
-    tournament = _TOURNAMENT_REGISTRY.get(tournament_id)
+    with _REGISTRY_LOCK:
+        tournament = _TOURNAMENT_REGISTRY.get(tournament_id)
     if not tournament:
         return {"error": f"Tournament ID '{tournament_id}' not found."}
 
@@ -236,19 +248,30 @@ def generate_fix_report(
             None,
         )
 
+    fix_report = FixReport(
+        tournament_id=tournament.tournament_id,
+        champion_candidate_id=tournament.champion_candidate_id,
+        summary_markdown=report_md,
+        git_patch_diff=champion_patch or "",
+    )
+
     if format == "json":
         return {
             "tournament_id": tournament.tournament_id,
             "champion_candidate_id": tournament.champion_candidate_id,
             "evaluations": [e.model_dump() for e in tournament.evaluations],
             "champion_diff": champion_patch,
+            "report": fix_report.model_dump(),
         }
     elif format == "diff":
-        return {"diff": champion_patch or ""}
+        return {"diff": champion_patch or "", "git_patch_diff": champion_patch or ""}
     else:
         return {
             "report_markdown": report_md,
+            "summary_markdown": report_md,
             "champion_diff": champion_patch or "",
+            "git_patch_diff": champion_patch or "",
+            "report": fix_report.model_dump(),
         }
 
 
@@ -266,8 +289,12 @@ def bugarena_autonomous_repair(
     Composite end-to-end autonomous repair workflow:
     Detection -> Reproduction -> Tournament -> Sandbox Verification -> Report.
     """
+    bounded_error = error_log[:65536] if len(error_log) > 65536 else error_log
+    bounded_desc = bug_description[:65536] if len(bug_description) > 65536 else bug_description
+    bounded_candidates = candidate_patches_raw[:20] if len(candidate_patches_raw) > 20 else candidate_patches_raw
+
     # 1. Detection
-    detect_res = bug_detect(repo_path, error_log, hint=hint)
+    detect_res = bug_detect(repo_path, bounded_error, hint=hint)
     suspects = detect_res["suspects"]
     primary_file = suspects[0]["file_path"] if suspects else "main.py"
     primary_func = suspects[0]["function_name"] if suspects else "target"
@@ -276,7 +303,7 @@ def bugarena_autonomous_repair(
     repro_res = bug_reproduce(
         repo_path=repo_path,
         suspect_file=primary_file,
-        bug_description=bug_description,
+        bug_description=bounded_desc,
         function_name=primary_func,
         call_expr=call_expr,
         expected_behavior=expected_behavior,
@@ -295,7 +322,7 @@ def bugarena_autonomous_repair(
     tourn_res = agent_fix_tournament(
         repo_path=repo_path,
         repro_test_file=test_rel_path,
-        candidate_patches_raw=candidate_patches_raw,
+        candidate_patches_raw=bounded_candidates,
     )
     if "error" in tourn_res:
         return tourn_res

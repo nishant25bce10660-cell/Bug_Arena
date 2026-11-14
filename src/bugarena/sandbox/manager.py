@@ -26,7 +26,7 @@ class EphemeralSandboxManager:
         """
         temp_dir = Path(tempfile.mkdtemp(prefix="bugarena_sandbox_")).resolve()
         try:
-            # Copy base repo files into temp_dir
+            # Copy base repo files into temp_dir, strictly ignoring secrets and cache dirs
             def ignore_patterns(path: str, names: list[str]) -> set[str]:
                 ignored = {
                     ".git",
@@ -35,9 +35,18 @@ class EphemeralSandboxManager:
                     ".pytest_cache",
                     ".ruff_cache",
                     "node_modules",
+                    ".env",
+                    ".env.local",
+                    ".env.production",
+                    ".aws",
+                    ".ssh",
                 }
                 return {
-                    name for name in names if name in ignored or name.endswith((".pyc", ".pyo"))
+                    name
+                    for name in names
+                    if name in ignored
+                    or name.startswith(".env")
+                    or name.endswith((".pyc", ".pyo"))
                 }
 
             shutil.copytree(

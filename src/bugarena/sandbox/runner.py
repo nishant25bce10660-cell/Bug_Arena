@@ -47,25 +47,39 @@ def run_sandboxed_command(
             env=base_env,
             shell=False,
         )
+        sensitive_keys = [
+            v for k, v in os.environ.items()
+            if any(s in k.upper() for s in ("KEY", "TOKEN", "SECRET", "AUTH", "PASS")) and len(v) > 5
+        ]
+
         try:
             stdout, stderr = proc.communicate(timeout=timeout_seconds)
             duration = time.perf_counter() - start_time
             return ExecutionOutcome(
                 exit_code=proc.returncode,
-                stdout=scrub_sensitive_data(stdout),
-                stderr=scrub_sensitive_data(stderr),
+                stdout=scrub_sensitive_data(stdout, sensitive_patterns=sensitive_keys, base_dir=ws_path),
+                stderr=scrub_sensitive_data(stderr, sensitive_patterns=sensitive_keys, base_dir=ws_path),
                 duration_seconds=round(duration, 3),
                 timed_out=False,
             )
         except subprocess.TimeoutExpired:
-            proc.kill()
+            if os.name == "nt":
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                    capture_output=True,
+                    check=False,
+                )
+            else:
+                proc.kill()
             stdout, stderr = proc.communicate()
             duration = time.perf_counter() - start_time
             return ExecutionOutcome(
                 exit_code=-1,
-                stdout=scrub_sensitive_data(stdout or ""),
+                stdout=scrub_sensitive_data(stdout or "", sensitive_patterns=sensitive_keys, base_dir=ws_path),
                 stderr=scrub_sensitive_data(
-                    (stderr or "") + f"\nCommand timed out after {timeout_seconds} seconds"
+                    (stderr or "") + f"\nCommand timed out after {timeout_seconds} seconds",
+                    sensitive_patterns=sensitive_keys,
+                    base_dir=ws_path,
                 ),
                 duration_seconds=round(duration, 3),
                 timed_out=True,
