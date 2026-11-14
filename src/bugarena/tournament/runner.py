@@ -9,6 +9,7 @@ from bugarena.models.agent import CandidatePatch, PersonaType
 from bugarena.models.bug import BugSpec
 from bugarena.models.repro import ReproTestSpec
 from bugarena.tournament.patch_parser import PatchValidationError, parse_and_validate_patch
+from bugarena.tournament.providers.dispatcher import MultiModelDispatcher
 
 CandidateGenerator = Callable[
     [PersonaType, BugSpec, ReproTestSpec], Coroutine[Any, Any, tuple[str, str]]
@@ -31,7 +32,8 @@ class TournamentRunner:
                 PersonaType.ARCHITECTURAL_FIXER,
             ]
         )
-        self.generator_func = generator_func
+        self.dispatcher = MultiModelDispatcher()
+        self.generator_func = generator_func or self.dispatcher.generate_patch
 
     async def run_tournament(
         self,

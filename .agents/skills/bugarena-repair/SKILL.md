@@ -88,19 +88,23 @@ Submit candidate diffs using `agent_fix_tournament(repo_path, repro_test_file, c
 
 For single-call execution, invoke `bugarena_autonomous_repair`:
 ```python
-result = call_mcp_tool("bugarena", "bugarena_autonomous_repair", {
-    "repo_path": "/path/to/repo",
-    "error_log": "<stack trace>",
-    "bug_description": "divide(10, 0) raises ZeroDivisionError instead of returning 0.0",
-    "call_expr": "Calculator().divide(10, 0)",
-    "expected_behavior": "Calculator().divide(10, 0) == 0.0",
-    "candidate_patches_raw": [
-        {
-            "candidate_id": "cand_surgical_01",
-            "persona": "surgical_minimalist",
-            "explanation": "Added zero check guard clause",
-            "diff": "--- a/src/calc.py\n+++ b/src/calc.py\n@@ -3,2 +3,4 @@\n+    if b == 0: return 0.0\n"
-        }
-    ]
-})
+result = call_mcp_tool(
+    "bugarena",
+    "bugarena_autonomous_repair",
+    {
+        "repo_path": "/path/to/repo",
+        "error_log": "<stack trace>",
+        "bug_description": "divide(10, 0) raises ZeroDivisionError instead of returning 0.0",
+        "call_expr": "Calculator().divide(10, 0)",
+        "expected_behavior": "Calculator().divide(10, 0) == 0.0",
+        "candidate_patches_raw": [
+            {
+                "candidate_id": "cand_surgical_01",
+                "persona": "surgical_minimalist",
+                "explanation": "Added zero check guard clause",
+                "diff": "--- a/src/calc.py\n+++ b/src/calc.py\n@@ -3,2 +3,4 @@\n+    if b == 0: return 0.0\n",
+            }
+        ],
+    },
+)
 ```
