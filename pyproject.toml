@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bugarena-mcp"
+version = "0.1.0"
+description = "Autonomous Bug Lifecycle & Multi-Agent Repair Arena MCP Server"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+    { name = "BugArena Team" }
+]
+dependencies = [
+    "mcp>=2.0.0",
+    "pydantic>=2.0.0",
+    "radon>=6.0.0",
+    "ruff>=0.5.0",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0"
+]
+
+[project.scripts]
+bugarena = "bugarena.server:main"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["src"]
+filterwarnings = [
+    "ignore::DeprecationWarning"
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
