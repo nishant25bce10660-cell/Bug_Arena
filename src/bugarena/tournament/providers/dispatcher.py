@@ -19,50 +19,56 @@ RAW_DIFF_REGEX = re.compile(r"(--- (?:a/)?\S+\n\+\+\+ (?:b/)?\S+\n@@[\s\S]+)", r
 def get_recommended_model_for_persona(persona: PersonaType) -> str:
     """
     Return the optimal model for a specific repair persona based on available keys.
-    Prioritizes Gemini, OpenAI, DeepSeek, and Groq; no Claude key required.
+    Prioritizes active keys (Groq, Gemini, OpenAI, DeepSeek); no Claude key required.
     """
+    has_groq = bool(os.environ.get("GROQ_API_KEY"))
     has_gemini = bool(os.environ.get("GEMINI_API_KEY"))
     has_openai = bool(os.environ.get("OPENAI_API_KEY"))
     has_deepseek = bool(os.environ.get("DEEPSEEK_API_KEY"))
-    has_groq = bool(os.environ.get("GROQ_API_KEY"))
 
     if persona == PersonaType.SURGICAL_MINIMALIST:
+        if has_groq:
+            return "qwen/qwen3.8-27b"
         if has_gemini:
-            return "gemini-2.0-flash"
+            return "gemma-4-26b-a4b-it"
         if has_openai:
             return "gpt-4o-mini"
         if has_deepseek:
             return "deepseek-chat"
-        if has_groq:
-            return "llama-3.3-70b-versatile"
-        return "gemini-2.0-flash"
+        return "qwen/qwen3.8-27b"
 
     if persona == PersonaType.DEFENSIVE_GUARDIAN:
         if has_gemini:
-            return "gemini-2.0-flash"
+            return "gemma-4-26b-a4b-it"
+        if has_groq:
+            return "qwen/qwen3.8-27b"
         if has_openai:
             return "gpt-4o"
-        return "gemini-2.0-flash"
+        return "gemma-4-26b-a4b-it"
 
     if persona == PersonaType.ARCHITECTURAL_FIXER:
+        if has_groq:
+            return "qwen/qwen3.8-27b"
+        if has_gemini:
+            return "gemma-4-26b-a4b-it"
         if has_openai:
             return "o3-mini"
-        if has_gemini:
-            return "gemini-2.0-flash"
         if has_deepseek:
             return "deepseek-reasoner"
-        return "gemini-2.0-flash"
+        return "qwen/qwen3.8-27b"
 
     if persona == PersonaType.CONTRACT_ENFORCER:
+        if has_gemini:
+            return "gemma-4-26b-a4b-it"
+        if has_groq:
+            return "qwen/qwen3.8-27b"
         if has_deepseek:
             return "deepseek-reasoner"
-        if has_gemini:
-            return "gemini-2.0-flash"
         if has_openai:
             return "gpt-4o"
-        return "deepseek-reasoner"
+        return "gemma-4-26b-a4b-it"
 
-    return "gemini-2.0-flash"
+    return "qwen/qwen3.8-27b"
 
 
 def extract_diff_and_explanation(response_text: str) -> tuple[str, str]:
@@ -164,11 +170,11 @@ class MultiModelDispatcher:
             model = get_recommended_model_for_persona(persona)
 
         # Route by model identifier
-        if "gemini" in model.lower():
+        if "gemini" in model.lower() or "gemma" in model.lower():
             return await self._call_gemini(model, system_msg, prompt)
         elif "deepseek" in model.lower():
             return await self._call_deepseek(model, system_msg, prompt)
-        elif "groq" in model.lower() or "llama" in model.lower():
+        elif "groq" in model.lower() or "llama" in model.lower() or "qwen" in model.lower():
             return await self._call_groq(model, system_msg, prompt)
         elif "ollama" in model.lower() or "localhost" in model.lower():
             return await self._call_ollama(model, system_msg, prompt)
@@ -182,14 +188,15 @@ class MultiModelDispatcher:
         if not api_key:
             return "", "Missing GEMINI_API_KEY environment variable"
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        clean_model = "gemma-4-26b-a4b-it" if model.lower() in ("gemini", "default", "gemini-2.0-flash") else model
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_model}:generateContent"
         headers = {
             "x-goog-api-key": api_key,
             "Content-Type": "application/json",
         }
+        full_content = f"{system}\n\n{user_prompt}" if system else user_prompt
         payload = {
-            "system_instruction": {"parts": [{"text": system}]},
-            "contents": [{"parts": [{"text": user_prompt}]}],
+            "contents": [{"role": "user", "parts": [{"text": full_content}]}],
             "generationConfig": {"temperature": 0.2, "maxOutputTokens": 2048},
         }
         async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
@@ -256,12 +263,13 @@ class MultiModelDispatcher:
         if not api_key:
             return "", "Missing GROQ_API_KEY environment variable"
 
+        clean_model = "qwen/qwen3.8-27b" if model.lower() in ("groq", "default", "llama-3.3-70b-versatile") else model
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
         payload = {
-            "model": model,
+            "model": clean_model,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user_prompt},
