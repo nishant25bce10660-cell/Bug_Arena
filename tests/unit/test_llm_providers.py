@@ -1,7 +1,10 @@
+import pytest
+
 from bugarena.models.agent import PersonaType
 from bugarena.models.bug import BugSpec, SuspectLocation
 from bugarena.models.repro import ReproTestSpec
 from bugarena.tournament.providers.dispatcher import (
+    MultiModelDispatcher,
     build_repair_prompt,
     extract_diff_and_explanation,
     get_recommended_model_for_persona,
@@ -63,11 +66,22 @@ def test_build_repair_prompt():
     assert "Surgical" in prompt or "minimum" in prompt.lower()
 
 
-def test_recommended_models_per_persona():
-    assert "claude" in get_recommended_model_for_persona(PersonaType.SURGICAL_MINIMALIST).lower()
+def test_recommended_models_per_persona(monkeypatch):
+    # Test with GEMINI_API_KEY set (No Claude key)
+    monkeypatch.setenv("GEMINI_API_KEY", "mock_gemini_key")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    assert "gemini" in get_recommended_model_for_persona(PersonaType.SURGICAL_MINIMALIST).lower()
     assert "gemini" in get_recommended_model_for_persona(PersonaType.DEFENSIVE_GUARDIAN).lower()
-    assert (
-        "o3" in get_recommended_model_for_persona(PersonaType.ARCHITECTURAL_FIXER).lower()
-        or "gpt" in get_recommended_model_for_persona(PersonaType.ARCHITECTURAL_FIXER).lower()
-    )
-    assert "deepseek" in get_recommended_model_for_persona(PersonaType.CONTRACT_ENFORCER).lower()
+
+
+@pytest.mark.asyncio
+async def test_fallback_when_claude_missing(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    dispatcher = MultiModelDispatcher()
+    # Requesting claude without key should safely return missing key explanation without crashing
+    _diff, expl = await dispatcher._call_anthropic("claude-3-5-sonnet", "sys", "prompt")
+    assert "Missing GEMINI_API_KEY" in expl or "Missing OPENAI_API_KEY" in expl

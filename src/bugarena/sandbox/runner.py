@@ -34,7 +34,7 @@ def run_sandboxed_command(
     clean_args = sanitize_command_args(args)
     base_env = sanitize_env(dict(os.environ))
     if env_override:
-        base_env.update(env_override)
+        base_env.update(sanitize_env(dict(env_override)))
 
     start_time = time.perf_counter()
     try:
@@ -75,7 +75,7 @@ def run_sandboxed_command(
         return ExecutionOutcome(
             exit_code=1,
             stdout="",
-            stderr=f"Execution error: {exc}",
+            stderr=scrub_sensitive_data(f"Execution error: {exc}"),
             duration_seconds=round(duration, 3),
             timed_out=False,
         )

@@ -16,7 +16,7 @@ from bugarena.models.tournament import TournamentRecord
 from bugarena.reporting.markdown_formatter import format_markdown_report
 from bugarena.synthesizer.red_validator import ReproductionFalsePositiveError, validate_red_baseline
 from bugarena.synthesizer.test_generator import generate_reproduction_test_code
-from bugarena.tournament.patch_parser import parse_and_validate_patch
+from bugarena.tournament.patch_parser import PatchValidationError, parse_and_validate_patch
 
 # Load .env file if present
 load_env_file()
@@ -129,15 +129,30 @@ def agent_fix_tournament(
     candidates: list[CandidatePatch] = []
 
     for item in candidate_patches_raw:
-        persona = PersonaType(item.get("persona", "surgical_minimalist"))
-        cand = parse_and_validate_patch(
-            raw_diff=item["diff"],
-            persona=persona,
-            explanation=item.get("explanation", ""),
-            candidate_id=item.get("candidate_id"),
-            protected_paths=[repro_test_file],
-        )
-        candidates.append(cand)
+        if not isinstance(item, dict) or "diff" not in item:
+            return {
+                "error": "Each candidate patch must be a dictionary containing a 'diff' string."
+            }
+        try:
+            persona = PersonaType(item.get("persona", "surgical_minimalist"))
+        except ValueError:
+            return {
+                "error": f"Invalid persona '{item.get('persona')}'. Allowed personas: {[p.value for p in PersonaType]}"
+            }
+
+        try:
+            cand = parse_and_validate_patch(
+                raw_diff=item["diff"],
+                persona=persona,
+                explanation=item.get("explanation", ""),
+                candidate_id=item.get("candidate_id"),
+                protected_paths=[repro_test_file],
+            )
+            candidates.append(cand)
+        except PatchValidationError as err:
+            return {
+                "error": f"Invalid diff syntax in candidate '{item.get('candidate_id')}': {err}"
+            }
 
     tournament = TournamentRecord(
         tournament_id=tournament_id,
@@ -266,6 +281,13 @@ def bugarena_autonomous_repair(
         call_expr=call_expr,
         expected_behavior=expected_behavior,
     )
+    if repro_res.get("status") != "REPRODUCED_RED":
+        return {
+            "status": repro_res.get("status", "FAILED_REPRO"),
+            "error": repro_res.get("error", "Reproduction test did not verify a Red-baseline."),
+            "repro_res": repro_res,
+        }
+
     test_rel_path = repro_res["test_file_path"]
     test_code = repro_res["test_code"]
 
@@ -275,6 +297,8 @@ def bugarena_autonomous_repair(
         repro_test_file=test_rel_path,
         candidate_patches_raw=candidate_patches_raw,
     )
+    if "error" in tourn_res:
+        return tourn_res
     t_id = tourn_res["tournament_id"]
 
     # 4. Evaluation
@@ -284,6 +308,8 @@ def bugarena_autonomous_repair(
         repro_test_file=test_rel_path,
         repro_code=test_code,
     )
+    if "error" in eval_res:
+        return eval_res
 
     # 5. Report
     report_res = generate_fix_report(t_id, format="markdown")
