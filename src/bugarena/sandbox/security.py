@@ -1,5 +1,6 @@
 """Security policies, path traversal validation, and sanitization utilities."""
 
+import os
 import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -82,12 +83,18 @@ def validate_pytest_target(target_path: str) -> str:
     return target_path
 
 
-def validate_safe_path(base_dir: Path | str, target_path: str) -> Path:
+def validate_safe_path(
+    base_dir: Path | str, target_path: str, *, allow_root: bool = False
+) -> Path:
     """
     Validate that target_path resides safely within base_dir.
 
-    Prevents path traversal attacks (e.g. '../', absolute path escapes).
+    Prevents path traversal attacks (e.g. '../', absolute path escapes),
+    empty/dot root self-targets, and NUL-byte smuggling.
     """
+    if not target_path or not target_path.strip() or "\x00" in target_path:
+        raise SecurityViolationError(f"Invalid target path: {target_path!r}")
+
     base_resolved = Path(base_dir).resolve()
 
     # If target_path is absolute, check directly, otherwise join
@@ -103,6 +110,11 @@ def validate_safe_path(base_dir: Path | str, target_path: str) -> Path:
         raise SecurityViolationError(
             f"Path traversal detected: '{target_path}' escapes base directory '{base_resolved}'"
         ) from e
+
+    if not allow_root and candidate == base_resolved:
+        raise SecurityViolationError(
+            f"Target path resolves to base directory itself: '{target_path}'"
+        )
 
     return candidate
 
@@ -175,18 +187,35 @@ def scrub_sensitive_data(
             if pat and len(pat) > 3:
                 scrubbed = scrubbed.replace(pat, "[REDACTED]")
 
-    # Redact provider API keys
+    # Redact base_dir variants BEFORE generic home-directory regexes
+    if base_dir:
+        raw_base = str(base_dir)
+        base_p = Path(raw_base)
+        candidates = {
+            raw_base,
+            raw_base.replace("\\", "/"),
+            raw_base.replace("/", "\\"),
+            base_p.as_posix(),
+            str(base_p.resolve()),
+            base_p.resolve().as_posix(),
+        }
+        flags = re.IGNORECASE if os.name == "nt" else 0
+        for variant in sorted((c for c in candidates if c), key=len, reverse=True):
+            scrubbed = re.sub(re.escape(variant), "[WORKSPACE]", scrubbed, flags=flags)
+
+    # Redact provider API keys and tokens
     scrubbed = re.sub(r"gh[pousr]_[A-Za-z0-9_]{16,}", "[REDACTED_GITHUB_TOKEN]", scrubbed)
+    scrubbed = re.sub(r"glpat-[A-Za-z0-9_-]{12,}", "[REDACTED_GITLAB_TOKEN]", scrubbed)
+    scrubbed = re.sub(r"xox[baprs]-[A-Za-z0-9-]{10,}", "[REDACTED_SLACK_TOKEN]", scrubbed)
+    scrubbed = re.sub(r"hf_[A-Za-z0-9]{16,}", "[REDACTED_HF_TOKEN]", scrubbed)
     scrubbed = re.sub(r"sk-[A-Za-z0-9_-]{20,}", "[REDACTED_API_KEY]", scrubbed)
-    scrubbed = re.sub(r"AIza[0-9A-Za-z-_]{35}", "[REDACTED_GEMINI_KEY]", scrubbed)
+    scrubbed = re.sub(r"AIza[0-9A-Za-z_-]{16,}", "[REDACTED_GEMINI_KEY]", scrubbed)
     scrubbed = re.sub(r"gsk_[A-Za-z0-9]{48,}", "[REDACTED_GROQ_KEY]", scrubbed)
     scrubbed = re.sub(r"AKIA[0-9A-Z]{16}", "[REDACTED_AWS_KEY]", scrubbed)
     scrubbed = re.sub(r"Bearer\s+[A-Za-z0-9_\-\.~+/]+=*", "Bearer [REDACTED_TOKEN]", scrubbed, flags=re.IGNORECASE)
 
-    # Redact absolute paths exposing host user or environment
-    scrubbed = re.sub(r"[a-zA-Z]:\\[Uu]sers\\[^\/\s\\]+", "[REDACTED_PATH]", scrubbed)
+    # Redact remaining absolute home paths (both '\' and '/' on Windows/POSIX)
+    scrubbed = re.sub(r"[a-zA-Z]:[/\\][Uu]sers[/\\][^/\s\\]+", "[REDACTED_PATH]", scrubbed)
     scrubbed = re.sub(r"/(?:home|Users)/[^/\s]+", "[REDACTED_PATH]", scrubbed)
-    if base_dir:
-        scrubbed = scrubbed.replace(str(base_dir), "[WORKSPACE]")
 
     return scrubbed

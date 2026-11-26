@@ -9,6 +9,8 @@ from pathlib import Path
 
 from bugarena.models.repro import ExecutionOutcome
 from bugarena.sandbox.security import (
+    BLOCKED_ENV_EXACT,
+    BLOCKED_ENV_SUBSTRINGS,
     SecurityViolationError,
     sanitize_command_args,
     sanitize_env,
@@ -86,6 +88,15 @@ def run_sandboxed_command(
             )
         clean_args = build_container_command(runtime, ws_path, container_image, clean_args)
 
+    sensitive_keys = [
+        v
+        for k, v in os.environ.items()
+        if (
+            k.upper() in BLOCKED_ENV_EXACT
+            or any(s in k.upper() for s in BLOCKED_ENV_SUBSTRINGS)
+        )
+        and len(v) > 3
+    ]
     start_time = time.perf_counter()
     try:
         proc = subprocess.Popen(
@@ -97,10 +108,6 @@ def run_sandboxed_command(
             env=base_env,
             shell=False,
         )
-        sensitive_keys = [
-            v for k, v in os.environ.items()
-            if any(s in k.upper() for s in ("KEY", "TOKEN", "SECRET", "AUTH", "PASS")) and len(v) > 5
-        ]
 
         try:
             stdout, stderr = proc.communicate(timeout=timeout_seconds)
@@ -139,7 +146,11 @@ def run_sandboxed_command(
         return ExecutionOutcome(
             exit_code=1,
             stdout="",
-            stderr=scrub_sensitive_data(f"Execution error: {exc}"),
+            stderr=scrub_sensitive_data(
+                f"Execution error: {exc}",
+                sensitive_patterns=sensitive_keys,
+                base_dir=ws_path,
+            ),
             duration_seconds=round(duration, 3),
             timed_out=False,
         )
