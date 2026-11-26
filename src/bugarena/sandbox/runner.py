@@ -2,6 +2,7 @@
 
 import os
 import shutil
+import signal
 import subprocess
 import time
 from collections.abc import Mapping, Sequence
@@ -98,6 +99,10 @@ def run_sandboxed_command(
         and len(v) > 3
     ]
     start_time = time.perf_counter()
+    extra_popen: dict[str, object] = {}
+    if os.name == "nt":
+        extra_popen["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+
     try:
         proc = subprocess.Popen(
             clean_args,
@@ -105,8 +110,12 @@ def run_sandboxed_command(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             env=base_env,
             shell=False,
+            start_new_session=os.name != "nt",
+            **extra_popen,
         )
 
         try:
@@ -127,8 +136,20 @@ def run_sandboxed_command(
                     check=False,
                 )
             else:
+                killpg = getattr(os, "killpg", None)
+                sigkill = getattr(signal, "SIGKILL", signal.SIGTERM)
+                try:
+                    if killpg is not None:
+                        killpg(proc.pid, sigkill)
+                    else:
+                        proc.kill()
+                except OSError:
+                    proc.kill()
+            try:
+                stdout, stderr = proc.communicate(timeout=2.0)
+            except subprocess.TimeoutExpired:
                 proc.kill()
-            stdout, stderr = proc.communicate()
+                stdout, stderr = "", ""
             duration = time.perf_counter() - start_time
             return ExecutionOutcome(
                 exit_code=-1,
