@@ -1,8 +1,8 @@
 # BugArena MCP — Project & Audit Report
 
-- **Generated (UTC):** `2026-11-26T15:20:28+00:00`
+- **Generated (UTC):** `2026-11-26T16:08:18+00:00`
 - **Repository:** `MCP server`
-- **Branch / HEAD:** `upgrade/bugarena-agents` @ `6b0a52b`
+- **Branch / HEAD:** `upgrade/bugarena-agents` @ `2c71f64`
 - **Tracked Files:** `187` across `23` audited areas
 - **Auto-Update Trigger:** `.githooks/pre-commit` + `scripts/update_project_report.py` + `AGENTS.md`
 
@@ -17,7 +17,7 @@
 | Check | Result | Details |
 | :--- | :--- | :--- |
 | `ruff check src tests scripts` | **PASS (0 issues)** | `All checks passed!` |
-| `pytest -q -m "not slow and not browser"` | **PASS (160 passed, 6 deselected in 60.85s (0:01:00))** | `Isolated unit + regression suites` |
+| `pytest -q --tb=short` | **PASS (166 passed in 170.49s (0:02:50))** | `Isolated unit + regression suites` |
 | `LoopOperator` Read-Only Audit | **PASS** | `23 areas, 0 open confirmed` |
 
 ## MCP Tools
@@ -83,6 +83,7 @@ Total registered tools: **26**
 No open audit findings detected in the current codebase.
 
 ## Recent Changes
+- `2c71f64 feat(browser): require explicit IDE browser permission with no predefined default`
 - `6b0a52b docs: complete v2 requirements traceability with observed proof`
 - `9ee6cc8 fix(hardening): close fail-open ACLs, SSRF origin check, robots pre-nav, and error surfacing`
 - `e8391a0 fix(hardening): tighten truth scoreboard, inspect lifecycle, sourcemap linking, verifier, and skill merge`
@@ -94,16 +95,10 @@ No open audit findings detected in the current codebase.
 - `a4ef4b1 feat(inspect): add 14 DevTools CDP collectors, coverage_matrix.md, and planted-bug fixture site`
 - `c3a81bd feat(browser): add Chromium discovery, RFC 6455 CDP client, isolated [mcp_<browser>] cursors, and access gate`
 - `977b8f2 feat(truth): add EvidenceVault hash chain, ClaimLedger, CitationChecker, Scoreboard, and TranscriptLogger`
-- `3f51417 docs(phase1): add v2 PLAN, ARCHITECTURE, THREAT_MODEL, REQUIREMENTS_TRACE, and DEVIATIONS`
 
 ## Working Tree Snapshot (`git status --short`)
 ```text
-M  docs/tools.md
-M  src/bugarena/browser/discovery.py
-M  src/bugarena/browser/questionnaire.py
-M  src/bugarena/inspect/site_audit.py
-M  src/bugarena/server.py
-A  tests/unit/test_browser_permission_ide.py
+M README.md
 ```
 
 ## How This Report Stays Updated

@@ -4,7 +4,7 @@
 
 **Find the defect. Reproduce it. Let competing patches prove themselves.**
 
-A Python-focused Model Context Protocol server for evidence-driven audits and repair tournaments.
+A Model Context Protocol server for Python repair tournaments and authorized browser/site audits with traceable evidence.
 
 [Quickstart](#quickstart) · [Features](#features) · [Tools](#mcp-tools) · [Proof](docs/evidence.md) · [Architecture](docs/architecture.md) · [Contributing](CONTRIBUTING.md)
 
@@ -18,7 +18,9 @@ Give BugArena a Python traceback and a local repository. It can locate suspect c
 
 For broader investigation, start an audit: specialist roles produce a persistent finding ledger, deduplicate related findings, run verification probes, and track which repository areas were examined.
 
-**Status: 0.1.0.** This is an evolving Python repair tool. Test outcomes support individual candidates; they do not guarantee that arbitrary repositories are bug-free. [Evidence and limits →](docs/evidence.md)
+The v2 upgrade adds explicit browser permission and scope confirmation, Chromium DevTools inspection, source-map linking, evidence-backed claims, report bundles, and an offline verification pack. These capabilities complement the existing Python repair workflow.
+
+**Package version: 0.1.0; workflow upgrade: v2.** Test outcomes support individual candidates and fixtures; they do not guarantee that arbitrary repositories or websites are bug-free. See [evidence and limits](docs/evidence.md), [upgrade traceability](docs/REQUIREMENTS_TRACE.md), and [known deviations](docs/DEVIATIONS.md).
 
 ```mermaid
 flowchart LR
@@ -43,6 +45,12 @@ flowchart LR
 | Audit without model calls | `audit_start` → `audit_round` with `auto_generate=false` |
 | Inspect and verify findings | `audit_status`, `finding_verify`, `audit_report` |
 | Evaluate fixes for confirmed findings | `fix_loop_start` |
+| Inspect a website with explicit permission | `session_prepare` → `session_confirm` → `site_audit_start` |
+| Inspect a browser panel | `browser_cursor_list`, then `inspect_panel` |
+| Link site findings to source code | `project_audit_start` |
+| Export evidence and independently check it | `report_build` → `verify_pack_build` |
+| Review or correct claims | `agent_scoreboard`, `claim_retract` |
+| Evaluate an external skill for integration | `merge_both_skills` with its default dry run |
 
 ## Features
 
@@ -55,6 +63,18 @@ flowchart LR
 | Persistent audit workflow | Finding states, deduplication, independent verification and area coverage | [Audit tests](tests/unit/test_audit_engine.py) |
 | Optional model generation | Gemini, OpenAI, DeepSeek, Groq and Ollama dispatch implementations | [Provider tests](tests/regression/test_ecc_039_provider_negative_paths.py) |
 | Inspectable outputs | Markdown, JSON and unified diffs, depending on the tool | [Tool reference](docs/tools.md) |
+| Explicit browser access | Session questionnaire, IDE browser permission and scoped access policies | [Permission tests](tests/unit/test_browser_permission_ide.py) |
+| DevTools inspection | Collectors for console, network, DOM, storage, performance and other panels | [Inspection tests](tests/unit/test_inspect_engine.py) |
+| Traceable claims | Evidence vault, hash chain, claim ledger and correction records | [Truth foundation tests](tests/unit/test_truth_foundation.py) |
+| Site-to-source investigation | Source-map linking and optional cross-vendor analysis | [Linking and provider tests](tests/unit/test_phase5_6_7_site_linking_grok.py) |
+| Portable verification | Report bundle and a generated stdlib-only offline verifier | [Report/verification tests](tests/unit/test_phase8_9_report_verify.py) |
+| External skill intake | Quarantine, security checks and namespaced integration | [Skill merge tests](tests/unit/test_phase10_merge_skills.py) |
+
+### Start a browser audit
+
+Run `session_prepare` and answer its questionnaire through your MCP client. Then use `session_confirm` with the requested ownership, scope and browser permissions before calling `site_audit_start`. Browser permission is explicit: there is no predefined browser grant. Consult the [tool reference](docs/tools.md) for the current argument schemas and the [threat model](docs/THREAT_MODEL.md) for execution boundaries.
+
+Browser inspection requires an available Chromium-based browser. PDF generation depends on Chromium. Generated bundles belong in ignored output directories such as `bugarena_reports/`; they are not source files to commit. The historical `bug_report/` and `bug-report ECC/` bundles remain excluded.
 
 ### How it differs from other MCP tools
 
