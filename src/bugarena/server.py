@@ -1,5 +1,6 @@
 """BugArena MCP Server exposing tools, resources, and repair tournament workflows."""
 
+import asyncio
 import threading
 import uuid
 from collections import OrderedDict
@@ -8,6 +9,8 @@ from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
+from bugarena.audit.fix_loop import run_fix_loop_session
+from bugarena.audit.loop import LoopOperator
 from bugarena.config import load_env_file
 from bugarena.discovery.engine import BugDiscoveryEngine
 from bugarena.evaluation.test_runner import PatchEvaluator
@@ -21,14 +24,17 @@ from bugarena.reporting.markdown_formatter import (
     format_markdown_report,
     save_markdown_report,
 )
+from bugarena.sandbox.security import scrub_sensitive_data, validate_safe_path
 from bugarena.synthesizer.red_validator import ReproductionFalsePositiveError, validate_red_baseline
 from bugarena.synthesizer.test_generator import generate_reproduction_test_code
 from bugarena.tournament.patch_parser import PatchValidationError, parse_and_validate_patch
+from bugarena.tournament.runner import TournamentRunner
 
 # Load .env file if present
 load_env_file()
 
 mcp = MCPServer("bugarena")
+_LOOP_OPERATOR = LoopOperator()
 
 # Bounded, thread-safe in-memory registries for multi-step tool sessions (max 100 entries to prevent memory leaks)
 MAX_REGISTRY_SIZE = 100
@@ -367,6 +373,7 @@ def bugarena_autonomous_repair(
     call_expr: str = "",
     expected_behavior: str = "",
     output_report_file: str = "",
+    auto_generate: bool = False,
 ) -> dict[str, Any]:
     """
     Composite end-to-end autonomous repair workflow:
@@ -400,6 +407,23 @@ def bugarena_autonomous_repair(
 
     test_rel_path = repro_res["test_file_path"]
     test_code = repro_res["test_code"]
+
+    # Optional gated LLM candidate generation via TournamentRunner
+    if not bounded_candidates and auto_generate:
+        b_spec = _BUG_REGISTRY.get(detect_res["bug_id"])
+        r_spec = _REPRO_REGISTRY.get(test_rel_path)
+        if b_spec and r_spec:
+            t_runner = TournamentRunner()
+            _tid, gen_cands = asyncio.run(t_runner.run_tournament(b_spec, r_spec))
+            bounded_candidates = [
+                {
+                    "candidate_id": c.candidate_id,
+                    "persona": c.persona.value,
+                    "explanation": c.explanation,
+                    "diff": c.diff,
+                }
+                for c in gen_cands
+            ]
 
     # 3. Tournament registration
     tourn_res = agent_fix_tournament(
@@ -450,6 +474,106 @@ def bugarena_autonomous_repair(
         "git_patch_diff": report_res["git_patch_diff"],
         "report_file_path": report_res["report_file_path"],
     }
+
+
+def _scrub_payload(obj: Any, base_dir: Path | str | None = None) -> Any:
+    if isinstance(obj, str):
+        return scrub_sensitive_data(obj, base_dir=base_dir)
+    if isinstance(obj, list):
+        return [_scrub_payload(item, base_dir=base_dir) for item in obj]
+    if isinstance(obj, dict):
+        return {k: _scrub_payload(v, base_dir=base_dir) for k, v in obj.items()}
+    return obj
+
+
+@mcp.tool()
+async def audit_start(
+    repo_path: str,
+    mode: str = "read_only",
+    max_rounds: int = 6,
+    agents: list[str] | None = None,
+) -> dict[str, Any]:
+    """Initialize a multi-agent read-only or fix audit run and return its run_id."""
+    if repo_path.startswith("-"):
+        raise ValueError(f"Invalid repo_path: '{repo_path}' cannot start with '-'")
+    res = await asyncio.to_thread(
+        _LOOP_OPERATOR.start,
+        repo_path,
+        mode=mode,
+        max_rounds=max_rounds,
+        agents=agents,
+    )
+    return _scrub_payload(res, base_dir=repo_path)
+
+
+@mcp.tool()
+async def audit_round(
+    run_id: str,
+    auto_generate: bool = False,
+) -> dict[str, Any]:
+    """Execute one multi-agent sweep, independent verification, dedupe, and coverage round."""
+    if not run_id or run_id.startswith("-"):
+        raise ValueError("Invalid run_id")
+    res = await _LOOP_OPERATOR.run_round(run_id, auto_generate=auto_generate)
+    return _scrub_payload(res)
+
+
+@mcp.tool()
+async def audit_status(run_id: str) -> dict[str, Any]:
+    """Return ledger counts, coverage percentage, and stop-condition state for an audit run."""
+    if not run_id or run_id.startswith("-"):
+        raise ValueError("Invalid run_id")
+    res = await asyncio.to_thread(_LOOP_OPERATOR.status, run_id)
+    return _scrub_payload(res)
+
+
+@mcp.tool()
+async def finding_verify(run_id: str, finding_id: str) -> dict[str, Any]:
+    """Force independent second-agent dynamic re-verification of one ledger finding."""
+    if not run_id or not finding_id:
+        raise ValueError("run_id and finding_id are required")
+    res = await asyncio.to_thread(_LOOP_OPERATOR.verify_one, run_id, finding_id)
+    return _scrub_payload(res)
+
+
+@mcp.tool()
+async def audit_report(
+    run_id: str,
+    format: str = "markdown",
+    output_file: str | None = None,
+) -> dict[str, Any]:
+    """Generate an evidence-graded audit report; output_file is confined by validate_safe_path."""
+    if format not in ("markdown", "json"):
+        raise ValueError(f"Invalid format {format!r}; expected 'markdown' or 'json'")
+    _rdir, state, _ledger, _cov = await asyncio.to_thread(_LOOP_OPERATOR.load_run, run_id)
+    validated_out: Path | None = None
+    if output_file:
+        validated_out = validate_safe_path(state.repo_path, output_file)
+    res = await asyncio.to_thread(
+        _LOOP_OPERATOR.report,
+        run_id,
+        format=format,
+        output_file=validated_out,
+    )
+    return _scrub_payload(res, base_dir=state.repo_path)
+
+
+@mcp.tool()
+async def fix_loop_start(
+    run_id: str,
+    finding_ids: list[str] | None = None,
+    auto_generate: bool = False,
+) -> dict[str, Any]:
+    """Execute test-first fix evaluation over confirmed ledger findings (LLM generation gated by auto_generate)."""
+    if not run_id or run_id.startswith("-"):
+        raise ValueError("Invalid run_id")
+    res = await run_fix_loop_session(
+        _LOOP_OPERATOR,
+        run_id,
+        finding_ids=finding_ids,
+        auto_generate=auto_generate,
+    )
+    return _scrub_payload(res)
 
 
 def main():
