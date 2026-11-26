@@ -24,11 +24,11 @@ def compute_complexity_score(cyclomatic_delta: int) -> float:
 
 
 def _count_ast_branches(code: str) -> int:
-    """Count branching points in Python code using AST."""
+    """Count branching points in Python code using AST; raise ValueError on SyntaxError."""
     try:
         tree = ast.parse(code)
-    except SyntaxError:
-        return 0
+    except SyntaxError as exc:
+        raise ValueError(f"SyntaxError in AST branch count: {exc}") from exc
 
     complexity = 1
     for node in ast.walk(tree):
@@ -47,13 +47,15 @@ def _count_ast_branches(code: str) -> int:
 def calculate_cyclomatic_delta(original_code: str, patched_code: str) -> int:
     """
     Calculate change in Cyclomatic Complexity between original and patched code.
+    Raises ValueError on SyntaxError so broken code cannot appear simplified.
     """
-    # Try radon if available, fallback to pure AST branch counter
     try:
         from radon.complexity import cc_visit
 
         orig_cc = sum(block.complexity for block in cc_visit(original_code))
         patch_cc = sum(block.complexity for block in cc_visit(patched_code))
         return patch_cc - orig_cc
-    except (ImportError, AttributeError, ValueError):
+    except SyntaxError as exc:
+        raise ValueError(f"SyntaxError while computing cyclomatic delta: {exc}") from exc
+    except (ImportError, AttributeError):
         return _count_ast_branches(patched_code) - _count_ast_branches(original_code)
