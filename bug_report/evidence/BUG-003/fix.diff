@@ -1,9 +1,0 @@
---- a/src/bugarena/synthesizer/red_validator.py
-+++ b/src/bugarena/synthesizer/red_validator.py
-@@ -3,2 +3,3 @@
-+import os
- import sys
- from pathlib import Path
-@@ -43,1 +44,1 @@
--            env_override={"PYTHONPATH": "."},
-+            env_override={"PYTHONPATH": f".{os.pathsep}src"},

@@ -1,6 +1,0 @@
---- a/src/bugarena/evaluation/ast_metrics.py
-+++ b/src/bugarena/evaluation/ast_metrics.py
-@@ -58,2 +58,2 @@
--    except (ImportError, AttributeError, ValueError):
-+    except (ImportError, AttributeError, ValueError, SyntaxError):
-         return _count_ast_branches(patched_code) - _count_ast_branches(original_code)
