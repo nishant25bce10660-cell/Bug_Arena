@@ -56,11 +56,33 @@ def _store_tournament(t_id: str, tournament: TournamentRecord) -> None:
             _TOURNAMENT_REGISTRY.popitem(last=False)
 
 
-def _store_repro(test_rel_path: str, spec: ReproTestSpec) -> None:
+def _repro_key(repo_path: Path | str, test_rel_path: str) -> str:
+    return f"{Path(repo_path).resolve()}::{test_rel_path}"
+
+
+def _store_repro(repo_path: Path | str, test_rel_path: str, spec: ReproTestSpec) -> None:
+    key = _repro_key(repo_path, test_rel_path)
     with _REGISTRY_LOCK:
-        _REPRO_REGISTRY[test_rel_path] = spec
+        _REPRO_REGISTRY[key] = spec
+        _REPRO_REGISTRY.move_to_end(key)
         if len(_REPRO_REGISTRY) > MAX_REGISTRY_SIZE:
             _REPRO_REGISTRY.popitem(last=False)
+
+
+def _lookup_repro(repo_path: Path | str, test_rel_path: str | None = None) -> ReproTestSpec | None:
+    resolved_prefix = f"{Path(repo_path).resolve()}::"
+    with _REGISTRY_LOCK:
+        if test_rel_path is not None:
+            key = f"{resolved_prefix}{test_rel_path}"
+            spec = _REPRO_REGISTRY.get(key)
+            if spec is not None:
+                _REPRO_REGISTRY.move_to_end(key)
+            return spec
+        for key in reversed(list(_REPRO_REGISTRY.keys())):
+            if key.startswith(resolved_prefix):
+                _REPRO_REGISTRY.move_to_end(key)
+                return _REPRO_REGISTRY[key]
+        return None
 
 
 def _store_bug(bug_id: str, spec: BugSpec) -> None:
@@ -134,7 +156,7 @@ def bug_reproduce(
             test_rel_path=test_rel_path,
             test_code=test_code,
         )
-        _store_repro(test_rel_path, spec)
+        _store_repro(repo_path, test_rel_path, spec)
         return {
             "status": "REPRODUCED_RED",
             "test_file_path": spec.test_file_path,
@@ -190,8 +212,7 @@ def agent_fix_tournament(
                 "error": f"Invalid diff syntax in candidate '{item.get('candidate_id')}': {err}"
             }
 
-    with _REGISTRY_LOCK:
-        linked_repro = _REPRO_REGISTRY.get(repro_test_file)
+    linked_repro = _lookup_repro(repo_path, repro_test_file)
 
     tournament = TournamentRecord(
         tournament_id=tournament_id,
@@ -449,12 +470,7 @@ def generate_bug_report(
     bug_spec = engine.discover_from_trace(error_log=error_log, hint=hint or None)
     _store_bug(bug_spec.bug_id, bug_spec)
 
-    repro_spec = None
-    with _REGISTRY_LOCK:
-        for r in _REPRO_REGISTRY.values():
-            if r.test_file_path.startswith(repo_path) or repo_path in r.test_file_path:
-                repro_spec = r
-                break
+    repro_spec = _lookup_repro(repo_path)
 
     report_md = (
         f"# Bug Diagnostic Report\n"
@@ -541,7 +557,7 @@ def bugarena_autonomous_repair(
     # Optional gated LLM candidate generation via TournamentRunner
     if not bounded_candidates and auto_generate:
         b_spec = _BUG_REGISTRY.get(detect_res["bug_id"])
-        r_spec = _REPRO_REGISTRY.get(test_rel_path)
+        r_spec = _lookup_repro(repo_path, test_rel_path)
         if b_spec and r_spec:
             t_runner = TournamentRunner()
             _tid, gen_cands = asyncio.run(t_runner.run_tournament(b_spec, r_spec))
@@ -566,6 +582,7 @@ def bugarena_autonomous_repair(
     t_id = tourn_res["tournament_id"]
 
     # Enrich tournament record with bug and repro specs for comprehensive reporting
+    r_spec_linked = _lookup_repro(repo_path, test_rel_path)
     with _REGISTRY_LOCK:
         existing_t = _TOURNAMENT_REGISTRY.get(t_id)
         if existing_t:
@@ -576,7 +593,7 @@ def bugarena_autonomous_repair(
                 evaluations=existing_t.evaluations,
                 champion_candidate_id=existing_t.champion_candidate_id,
                 bug_spec=_BUG_REGISTRY.get(detect_res["bug_id"]),
-                repro_spec=_REPRO_REGISTRY.get(test_rel_path),
+                repro_spec=r_spec_linked,
                 bug_description=bounded_desc,
             )
             _TOURNAMENT_REGISTRY[t_id] = updated_t
