@@ -79,7 +79,7 @@ AREA_PREFIX_RULES: tuple[tuple[str, str], ...] = (
 
 def classify_area(rel_path: str) -> str:
     """Map a relative repository file path to a logical audit area."""
-    norm = rel_path.replace("\\", "/").lstrip("./")
+    norm = rel_path.replace("\\", "/").removeprefix("./")
     for prefix, area in AREA_PREFIX_RULES:
         if prefix.endswith("/") and norm.startswith(prefix):
             return area
@@ -100,6 +100,7 @@ def build_coverage_matrix(
     repo = Path(repo_path).resolve()
     area_files: dict[str, list[str]] = {}
     test_files_lower: list[str] = []
+    test_contents_lower: list[str] = []
 
     for f in tracked_files:
         norm = f.replace("\\", "/")
@@ -110,6 +111,9 @@ def build_coverage_matrix(
             continue
         if norm.startswith("tests/") and norm.endswith(".py"):
             test_files_lower.append(norm.lower())
+            tp = repo / norm
+            if tp.is_file():
+                test_contents_lower.append(tp.read_text(encoding="utf-8", errors="ignore").lower())
         area = classify_area(norm)
         area_files.setdefault(area, []).append(norm)
 
@@ -124,10 +128,19 @@ def build_coverage_matrix(
     areas: list[ModuleCoverage] = []
     for area_name in sorted(area_files):
         files_sorted = tuple(sorted(area_files[area_name]))
-        has_test = any(
-            area_name in tf or any(Path(src_f).stem in tf for src_f in files_sorted)
-            for tf in test_files_lower
-        ) or area_name == "tests"
+        module_tokens = [
+            src_f.removeprefix("src/").removesuffix(".py").replace("/", ".").lower()
+            for src_f in files_sorted
+            if src_f.endswith(".py")
+        ]
+        has_test = (
+            area_name == "tests"
+            or any(
+                area_name in tf or any(Path(src_f).stem in tf for src_f in files_sorted)
+                for tf in test_files_lower
+            )
+            or any(tok in body for tok in module_tokens for body in test_contents_lower)
+        )
         areas.append(
             ModuleCoverage(
                 area=area_name,

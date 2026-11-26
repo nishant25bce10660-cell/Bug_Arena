@@ -604,7 +604,10 @@ print("DISPROVED: lambda and exception parsed properly")
 
     # 5. ast_analyzer empty line_range and cross-match node docstring (ECC-034 / BA-015)
     ast_text, ast_lines = _read_rel(repo, "src/bugarena/discovery/ast_analyzer.py")
-    if ast_text and "line_range=(1, 0)" in repr(ast_text) or (ast_text and "if not lines:" not in ast_text):
+    if ast_text and (
+        "line_range=(1, 0)" in repr(ast_text)
+        or ("if not file_content" not in ast_text and "if not lines:" not in ast_text)
+    ):
         ln = _find_line(ast_lines, r"end = min\(len\(lines\)")
         findings.append(
             _draft(
@@ -887,7 +890,7 @@ with tempfile.TemporaryDirectory() as d:
     tr_text, tr_lines = _read_rel(repo, "src/bugarena/evaluation/test_runner.py")
     _sc_text, _ = _read_rel(repo, "src/bugarena/evaluation/scorer.py")
     am_text, _ = _read_rel(repo, "src/bugarena/evaluation/ast_metrics.py")
-    if tr_text and ("delta_cc = 0" in tr_text or "total_tests = 1" in tr_text):
+    if tr_text and ("calculate_cyclomatic_delta" not in tr_text or "total_tests = 1" in tr_text):
         ln = _find_line(tr_lines, r"delta_cc\s*=\s*0")
         findings.append(
             _draft(

@@ -16,6 +16,7 @@ from bugarena.audit import (
     LoopOperator,
     SeverityLevel,
     apply_severity_rubric,
+    classify_area,
     merge_or_insert_draft,
     split_bundled_finding,
     verify_finding,
@@ -246,3 +247,10 @@ async def test_agent_runner_schema_validation_success(tmp_path):
     res = await runner.run_agent(spec, repo, auto_generate=True, llm_caller=ok_llm)
     assert len(res.findings) == 1
     assert res.error is None
+
+
+def test_classify_area_preserves_leading_dotfiles():
+    assert classify_area(".gitignore") == "packaging"
+    assert classify_area("./.env.example") == "packaging"
+    assert classify_area(".agents/skills/bugarena-repair/SKILL.md") == "docs"
+    assert classify_area("./src/bugarena/config.py") == "config"
