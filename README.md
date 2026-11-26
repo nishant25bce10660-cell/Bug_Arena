@@ -175,6 +175,10 @@ Missing regression tests earn no regression points. Unmeasured mutation testing 
 
 [Contributor guide](CONTRIBUTING.md) · [Repository review](docs/repository-review.md) · [Evidence and known limits](docs/evidence.md)
 
+## Contributors
+
+- **[ChatGPT by OpenAI](https://chatgpt.com/)** — AI-assisted repository review, documentation, organization, and validation through Codex, under the repository owner's direction.
+
 No license file is currently included; a maintainer needs to choose and add one. The previous unsupported MIT label has been removed.
 
 [Back to top ↑](#bugarena-mcp)
