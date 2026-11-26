@@ -6,7 +6,7 @@ from pathlib import Path
 from bugarena.models.repro import ReproTestSpec
 from bugarena.sandbox.manager import EphemeralSandboxManager
 from bugarena.sandbox.runner import run_sandboxed_command
-from bugarena.sandbox.security import validate_safe_path
+from bugarena.sandbox.security import validate_pytest_target, validate_safe_path
 
 
 class ReproductionFalsePositiveError(Exception):
@@ -27,6 +27,7 @@ def validate_red_baseline(
     """
     repo = Path(base_repo_path).resolve()
     py_exec = python_executable or sys.executable
+    validate_pytest_target(test_rel_path)
 
     manager = EphemeralSandboxManager(base_repo_path=repo)
     with manager.create_sandbox() as sandbox_path:
@@ -35,10 +36,10 @@ def validate_red_baseline(
         test_file.parent.mkdir(parents=True, exist_ok=True)
         test_file.write_text(test_code, encoding="utf-8")
 
-        # Execute pytest on the newly synthesized test
+        # Execute pytest on the newly synthesized test (-- prevents CLI option injection)
         outcome = run_sandboxed_command(
             workspace=sandbox_path,
-            args=[py_exec, "-m", "pytest", test_rel_path, "-q"],
+            args=[py_exec, "-m", "pytest", "-q", "--", test_rel_path],
             timeout_seconds=timeout_seconds,
             env_override={"PYTHONPATH": "."},
         )

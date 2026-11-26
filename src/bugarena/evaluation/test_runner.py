@@ -10,7 +10,11 @@ from bugarena.models.repro import ReproTestSpec
 from bugarena.models.tournament import PatchEvaluation
 from bugarena.sandbox.manager import EphemeralSandboxManager
 from bugarena.sandbox.runner import run_sandboxed_command
-from bugarena.sandbox.security import SecurityViolationError, validate_safe_path
+from bugarena.sandbox.security import (
+    SecurityViolationError,
+    validate_pytest_target,
+    validate_safe_path,
+)
 
 
 class PatchEvaluator:
@@ -35,6 +39,8 @@ class PatchEvaluator:
         """
         Evaluate all candidate patches, return leaderboard of evaluations and champion ID.
         """
+        validate_pytest_target(repro_spec.test_file_path)
+        validate_pytest_target(self.regression_test_dir)
         evaluations: list[PatchEvaluation] = []
         manager = EphemeralSandboxManager(self.base_repo_path)
 
@@ -68,7 +74,7 @@ class PatchEvaluator:
                 # 3. Run reproduction test
                 repro_outcome = run_sandboxed_command(
                     workspace=sandbox_path,
-                    args=[self.python_executable, "-m", "pytest", repro_spec.test_file_path, "-q"],
+                    args=[self.python_executable, "-m", "pytest", "-q", "--", repro_spec.test_file_path],
                     timeout_seconds=timeout_seconds,
                     env_override={"PYTHONPATH": "."},
                 )
@@ -81,9 +87,10 @@ class PatchEvaluator:
                         self.python_executable,
                         "-m",
                         "pytest",
-                        self.regression_test_dir,
                         f"--ignore={repro_spec.test_file_path}",
                         "-q",
+                        "--",
+                        self.regression_test_dir,
                     ],
                     timeout_seconds=timeout_seconds,
                     env_override={"PYTHONPATH": "."},

@@ -22,6 +22,11 @@ BLOCKED_ENV_SUBSTRINGS = (
     "DSN",
     "CONNECTION",
     "PASS",
+    "PROXY",
+    "STARTUP",
+    "PRELOAD",
+    "COOKIE",
+    "SESSION",
 )
 
 BLOCKED_ENV_EXACT = {
@@ -30,9 +35,51 @@ BLOCKED_ENV_EXACT = {
     "STRIPE_SK",
     "MONGO_URI",
     "REDIS_URL",
+    "MYSQL_PWD",
+    "PGPASSFILE",
+    "PYTHONSTARTUP",
+    "LD_PRELOAD",
+    "LD_LIBRARY_PATH",
+    "DYLD_INSERT_LIBRARIES",
+    "GH_PAT",
+    "CI_JOB_JWT",
+    "NPM_TOKEN",
 }
 
+ENV_ALLOWLIST = frozenset({
+    "PATH",
+    "SYSTEMROOT",
+    "COMSPEC",
+    "PATHEXT",
+    "TEMP",
+    "TMP",
+    "TMPDIR",
+    "WINDIR",
+    "HOME",
+    "USERPROFILE",
+    "LANG",
+    "LC_ALL",
+    "TERM",
+    "PYTHONPATH",
+    "PYTHONHOME",
+    "VIRTUAL_ENV",
+    "NUMBER_OF_PROCESSORS",
+    "OS",
+    "PROCESSOR_ARCHITECTURE",
+})
+
 DANGEROUS_SHELL_PATTERNS = re.compile(r"[;&|`$><]")
+
+
+def validate_pytest_target(target_path: str) -> str:
+    """Reject empty, option-like ('-...'), or NUL pytest target paths."""
+    if not target_path or not target_path.strip() or "\x00" in target_path:
+        raise SecurityViolationError(f"Invalid pytest target path: {target_path!r}")
+    if target_path.lstrip().startswith("-"):
+        raise SecurityViolationError(
+            f"Option injection rejected in pytest target path: {target_path!r}"
+        )
+    return target_path
 
 
 def validate_safe_path(base_dir: Path | str, target_path: str) -> Path:
@@ -60,14 +107,21 @@ def validate_safe_path(base_dir: Path | str, target_path: str) -> Path:
     return candidate
 
 
-def sanitize_env(base_env: Mapping[str, str]) -> dict[str, str]:
+def sanitize_env(base_env: Mapping[str, str], *, allowlist_only: bool = False) -> dict[str, str]:
     """
-    Create a sanitized copy of environment variables, stripping secrets, URLs, and tokens.
+    Create a sanitized copy of environment variables.
+    When allowlist_only=True, retains only safe minimal OS/runtime variables from ENV_ALLOWLIST.
     """
     clean_env: dict[str, str] = {}
     for key, val in base_env.items():
         key_upper = key.upper()
-        if key_upper in BLOCKED_ENV_EXACT or any(blocked in key_upper for blocked in BLOCKED_ENV_SUBSTRINGS):
+        if allowlist_only and key_upper not in ENV_ALLOWLIST:
+            continue
+        if (
+            key_upper in BLOCKED_ENV_EXACT
+            or key_upper.endswith(("_PAT", "_JWT"))
+            or any(blocked in key_upper for blocked in BLOCKED_ENV_SUBSTRINGS)
+        ):
             continue
         clean_env[key] = val
     clean_env["PYTHONUNBUFFERED"] = "1"
@@ -79,18 +133,23 @@ def sanitize_command_args(args: Sequence[str]) -> list[str]:
     """
     Validate and sanitize command argument vector.
 
-    Ensures no command injection metacharacters are embedded in arguments,
-    while permitting valid Python code arguments following '-c'.
+    Blocks shell operators/newlines across arguments, permitting inline `-c` code payloads
+    strictly for approved Python executables without embedded newlines/NUL bytes.
     """
     if not args:
         raise SecurityViolationError("Empty command argument vector is disallowed.")
 
+    exe_stem = Path(args[0]).stem.lower()
+    is_python_exe = exe_stem.startswith("python") or exe_stem in {"py", "pypy3"}
+
     sanitized: list[str] = []
     for i, arg in enumerate(args):
-        # If argument immediately follows '-c', treat as code payload
-        is_code_arg = i > 0 and args[i - 1] == "-c"
-
-        if not is_code_arg and DANGEROUS_SHELL_PATTERNS.search(arg):
+        if "\x00" in arg or "\n" in arg or "\r" in arg:
+            raise SecurityViolationError(
+                f"Disallowed control character or newline in command arg at index {i}"
+            )
+        is_python_code_arg = is_python_exe and i > 0 and args[i - 1] == "-c"
+        if not is_python_code_arg and DANGEROUS_SHELL_PATTERNS.search(arg):
             raise SecurityViolationError(
                 f"Dangerous shell operator or metacharacter detected in command arg: '{arg}'"
             )

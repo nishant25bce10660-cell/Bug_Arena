@@ -32,9 +32,9 @@ def run_sandboxed_command(
         raise SecurityViolationError(f"Workspace directory does not exist: {ws_path}")
 
     clean_args = sanitize_command_args(args)
-    base_env = sanitize_env(dict(os.environ))
+    base_env = sanitize_env(dict(os.environ), allowlist_only=True)
     if env_override:
-        base_env.update(sanitize_env(dict(env_override)))
+        base_env.update(sanitize_env(dict(env_override), allowlist_only=True))
 
     start_time = time.perf_counter()
     try:
