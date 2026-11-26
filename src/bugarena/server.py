@@ -157,12 +157,18 @@ def bug_reproduce(
             test_code=test_code,
         )
         _store_repro(repo_path, test_rel_path, spec)
+        failure_parts = []
+        if spec.initial_outcome:
+            if spec.initial_outcome.stdout.strip():
+                failure_parts.append(spec.initial_outcome.stdout.strip())
+            if spec.initial_outcome.stderr.strip():
+                failure_parts.append(spec.initial_outcome.stderr.strip())
         return {
             "status": "REPRODUCED_RED",
             "test_file_path": spec.test_file_path,
             "test_code": spec.test_code,
             "red_baseline_verified": spec.red_baseline_verified,
-            "failure_output": spec.initial_outcome.stderr if spec.initial_outcome else "",
+            "failure_output": "\n".join(failure_parts),
         }
     except ReproductionFalsePositiveError as err:
         return {
