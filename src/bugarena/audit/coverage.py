@@ -68,11 +68,14 @@ AREA_PREFIX_RULES: tuple[tuple[str, str], ...] = (
     ("src/bugarena/config.py", "config"),
     ("src/bugarena/__init__.py", "packaging"),
     ("scripts/", "scripts"),
+    (".githooks/", "scripts"),
     ("tests/", "tests"),
     ("pyproject.toml", "packaging"),
     (".gitignore", "packaging"),
     (".env.example", "packaging"),
     ("README.md", "docs"),
+    ("PROJECT_REPORT.md", "docs"),
+    ("AGENTS.md", "docs"),
     (".agents/", "docs"),
 )
 

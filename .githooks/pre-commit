@@ -1,0 +1,23 @@
+#!/usr/bin/env sh
+set -eu
+
+if [ "${BUGARENA_SKIP_REPORT_HOOK:-0}" = "1" ]; then
+    exit 0
+fi
+
+# Skip when commit only updates PROJECT_REPORT.md itself.
+changed_other="$(git diff --cached --name-only | grep -v '^PROJECT_REPORT\.md$' || true)"
+if [ -z "$changed_other" ]; then
+    exit 0
+fi
+
+if [ -x ".venv/Scripts/python.exe" ]; then
+    PY_BIN=".venv/Scripts/python.exe"
+elif [ -x ".venv/bin/python" ]; then
+    PY_BIN=".venv/bin/python"
+else
+    PY_BIN="python"
+fi
+
+echo "[pre-commit] Auditing project and updating PROJECT_REPORT.md..."
+"$PY_BIN" scripts/update_project_report.py --stage
