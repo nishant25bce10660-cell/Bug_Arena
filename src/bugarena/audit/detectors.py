@@ -510,13 +510,13 @@ with tempfile.TemporaryDirectory() as d:
 import sys
 from bugarena.models.agent import PersonaType
 from bugarena.tournament.patch_parser import PatchValidationError, parse_and_validate_patch
-diff = "--- a/tests/repro/secret.py\\r\\n+++ /dev/null\\r\\n@@ -1,1 +0,0 @@\\r\\n-assert False\\r\\n"
+diff = "--- a/tests/./repro/secret.py\\n+++ b/tests/./repro/secret.py\\n@@ -1,1 +1,1 @@\\n-assert False\\n+assert True\\n"
 try:
     parse_and_validate_patch(diff, PersonaType.SURGICAL_MINIMALIST, "cheat", protected_paths=["tests/repro/secret.py"])
-    print("REPRODUCED: /dev/null + CRLF bypass allowed deleting protected file")
+    print("REPRODUCED: dot-segment path bypass allowed tampering protected file")
     sys.exit(1)
 except PatchValidationError:
-    print("DISPROVED: /dev/null and CRLF blocked properly")
+    print("DISPROVED: normalized path blocked protected file bypass")
 """,
                 suggested_fix="Normalize CRLF and paths with posixpath.normpath, reject '..'/absolute, match exact/parent path segments, validate @@ hunks, and count churn inside hunks only.",
                 risks="Header-only empty diffs without @@ hunks will rightly be rejected.",
@@ -568,7 +568,7 @@ with tempfile.TemporaryDirectory() as d:
 
     # 4. log_parser <lambda>/<listcomp> and colon parsing (ECC-026 / BA-014)
     lp_text, lp_lines = _read_rel(repo, "src/bugarena/discovery/log_parser.py")
-    if lp_text and r"\w+" in lp_text and "<" not in lp_text.split("FRAME_PATTERN")[1][:180]:
+    if lp_text and r"(?P<func>\w+)" in lp_text:
         ln = _find_line(lp_lines, r"FRAME_PATTERN")
         findings.append(
             _draft(

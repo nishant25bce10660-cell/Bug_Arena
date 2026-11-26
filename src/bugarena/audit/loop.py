@@ -10,12 +10,10 @@ import tempfile
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from bugarena.agents.registry import SWEEP_ROLES, build_agent_registry
-from bugarena.agents.runner import AgentLLMCaller, AgentRunner
 from bugarena.audit.coverage import (
     CoverageMatrix,
     build_coverage_matrix,
@@ -29,6 +27,9 @@ from bugarena.audit.ledger import Finding, FindingLedger, FindingState
 from bugarena.audit.report import generate_audit_report
 from bugarena.audit.tools import tool_git_ls
 from bugarena.audit.verify import verify_finding
+
+if TYPE_CHECKING:
+    from bugarena.agents.runner import AgentLLMCaller
 
 
 class RoundSummary(BaseModel):
@@ -93,6 +94,9 @@ class LoopOperator:
     """Orchestrates multi-round specialist sweeps, independent verification, dedupe, and reporting."""
 
     def __init__(self, state_root: Path | str | None = None):
+        from bugarena.agents.registry import build_agent_registry
+        from bugarena.agents.runner import AgentRunner
+
         self.state_root = Path(state_root) if state_root else None
         self.registry = build_agent_registry()
         self.runner = AgentRunner()
@@ -164,6 +168,8 @@ class LoopOperator:
         repo = Path(repo_path).resolve()
         if not repo.is_dir():
             raise FileNotFoundError(f"Repository directory does not exist: {repo}")
+
+        from bugarena.agents.registry import SWEEP_ROLES
 
         rid = run_id or f"audit_{uuid.uuid4().hex[:8]}"
         selected = tuple(agents) if agents is not None else SWEEP_ROLES
