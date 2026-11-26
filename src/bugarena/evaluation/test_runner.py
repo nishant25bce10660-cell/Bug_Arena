@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import ast
+import concurrent.futures
+import os
 import re
 import sys
 from collections.abc import Sequence
@@ -91,16 +93,18 @@ class PatchEvaluator:
         candidates: Sequence[CandidatePatch],
         repro_spec: ReproTestSpec,
         timeout_seconds: float = 30.0,
+        max_workers: int = 4,
+        total_deadline_seconds: float | None = 180.0,
     ) -> tuple[list[PatchEvaluation], str | None]:
         """
-        Evaluate all candidate patches, return leaderboard of evaluations and champion ID.
+        Evaluate all candidate patches concurrently inside bounded sandboxes with an overall deadline,
+        returning ranked evaluations and champion ID.
         """
         validate_pytest_target(repro_spec.test_file_path)
         validate_pytest_target(self.regression_test_dir)
-        evaluations: list[PatchEvaluation] = []
         manager = EphemeralSandboxManager(self.base_repo_path)
 
-        for cand in candidates:
+        def _evaluate_one(cand: CandidatePatch) -> PatchEvaluation:
             lines_changed = cand.lines_added + cand.lines_deleted
             with manager.create_sandbox() as sandbox_path:
                 # 1. Write the verified reproduction test into the sandbox
@@ -113,25 +117,21 @@ class PatchEvaluator:
                     manager.apply_patch(sandbox_path, cand.diff)
                 except (OSError, ValueError, SecurityViolationError) as exc:
                     clean_err = scrub_sensitive_data(str(exc), base_dir=sandbox_path)
-                    evaluations.append(
-                        PatchEvaluation(
-                            candidate_id=cand.candidate_id,
-                            repro_passed=False,
-                            regressions_count=0,
-                            total_regressions_checked=0,
-                            diff_churn=lines_changed,
-                            cyclomatic_delta=0,
-                            mutation_kill_ratio=None,
-                            score=0.0,
-                            disqualified=True,
-                            disqualification_reason=f"Patch application failed: {clean_err}",
-                        )
+                    return PatchEvaluation(
+                        candidate_id=cand.candidate_id,
+                        repro_passed=False,
+                        regressions_count=0,
+                        total_regressions_checked=0,
+                        diff_churn=lines_changed,
+                        cyclomatic_delta=0,
+                        mutation_kill_ratio=None,
+                        score=0.0,
+                        disqualified=True,
+                        disqualification_reason=f"Patch application failed: {clean_err}",
                     )
-                    continue
 
                 # 3. Hard AST/Syntax Gate & Cyclomatic Complexity Delta across modified .py files
                 delta_cc = 0
-                syntax_error_reason: str | None = None
                 for rel_py in _extract_modified_py_files(cand.diff):
                     orig_p = self.base_repo_path / rel_py
                     patched_p = sandbox_path / rel_py
@@ -143,12 +143,7 @@ class PatchEvaluator:
                         ast.parse(new_src, filename=rel_py)
                         delta_cc += calculate_cyclomatic_delta(orig_src, new_src)
                     except (SyntaxError, ValueError) as exc:
-                        syntax_error_reason = f"Syntax/AST gate failed in '{rel_py}': {exc}"
-                        break
-
-                if syntax_error_reason:
-                    evaluations.append(
-                        PatchEvaluation(
+                        return PatchEvaluation(
                             candidate_id=cand.candidate_id,
                             repro_passed=False,
                             regressions_count=0,
@@ -158,10 +153,8 @@ class PatchEvaluator:
                             mutation_kill_ratio=None,
                             score=0.0,
                             disqualified=True,
-                            disqualification_reason=syntax_error_reason,
+                            disqualification_reason=f"Syntax/AST gate failed in '{rel_py}': {exc}",
                         )
-                    )
-                    continue
 
                 # 4. Run reproduction test
                 repro_outcome = run_sandboxed_command(
@@ -198,14 +191,44 @@ class PatchEvaluator:
                     cyclomatic_delta=delta_cc,
                 )
                 if reg_outcome.timed_out and not eval_record.disqualified:
-                    eval_record = eval_record.model_copy(
+                    return eval_record.model_copy(
                         update={
                             "score": 0.0,
                             "disqualified": True,
                             "disqualification_reason": "Regression test suite timed out.",
                         }
                     )
-                evaluations.append(eval_record)
+                return eval_record
+
+        if not candidates:
+            return [], None
+
+        workers = max(1, min(max_workers, os.cpu_count() or 2, len(candidates)))
+        evaluations: list[PatchEvaluation] = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            future_map = {pool.submit(_evaluate_one, cand): cand for cand in candidates}
+            done, _not_done = concurrent.futures.wait(
+                future_map.keys(), timeout=total_deadline_seconds
+            )
+            for fut, cand in future_map.items():
+                if fut in done:
+                    evaluations.append(fut.result())
+                else:
+                    fut.cancel()
+                    evaluations.append(
+                        PatchEvaluation(
+                            candidate_id=cand.candidate_id,
+                            repro_passed=False,
+                            regressions_count=0,
+                            total_regressions_checked=0,
+                            diff_churn=cand.lines_added + cand.lines_deleted,
+                            cyclomatic_delta=0,
+                            mutation_kill_ratio=None,
+                            score=0.0,
+                            disqualified=True,
+                            disqualification_reason="Evaluation exceeded total tournament deadline.",
+                        )
+                    )
 
         ranked = sorted(evaluations, key=lambda e: e.score, reverse=True)
         champion_id = next((e.candidate_id for e in ranked if not e.disqualified), None)

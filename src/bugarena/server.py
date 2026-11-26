@@ -151,13 +151,16 @@ def bug_reproduce(
     """
     Synthesize an automated minimal reproduction test and verify Red-baseline failure.
     """
+    if repo_path.startswith("-"):
+        raise ValueError(f"Invalid repo_path: '{repo_path}' cannot start with '-'")
+    bounded_desc = bug_description[:65536] if len(bug_description) > 65536 else bug_description
     suspect = SuspectLocation(
         file_path=suspect_file,
         function_name=function_name or "target",
         line_range=(1, 1),
         confidence=0.9,
         bug_type="Defect",
-        reasoning=bug_description,
+        reasoning=bounded_desc,
         code_snippet="",
     )
     test_code = generate_reproduction_test_code(
@@ -517,8 +520,11 @@ def generate_bug_report(
     Generate and save a standalone markdown (.md) diagnostic report of a detected bug,
     including suspect code locations, AST analysis, and stack trace.
     """
+    if repo_path.startswith("-"):
+        raise ValueError(f"Invalid repo_path: '{repo_path}' cannot start with '-'")
+    bounded_log = error_log[-65536:] if len(error_log) > 65536 else error_log
     engine = BugDiscoveryEngine(repo_path)
-    bug_spec = engine.discover_from_trace(error_log=error_log, hint=hint or None)
+    bug_spec = engine.discover_from_trace(error_log=bounded_log, hint=hint or None)
     _store_bug(bug_spec.bug_id, bug_spec)
 
     repro_spec = _lookup_repro(repo_path)
