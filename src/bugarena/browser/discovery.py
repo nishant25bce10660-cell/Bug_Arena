@@ -52,7 +52,9 @@ def _probe_version(exe: str) -> str:
             timeout=4.0,
             check=False,
         )
-        out = (res.stdout or res.stderr or "").strip()
+        if res.returncode != 0:
+            return "unknown"
+        out = (res.stdout or "").strip()
         return out.splitlines()[0] if out else "unknown"
     except (OSError, subprocess.SubprocessError):
         return "unknown"

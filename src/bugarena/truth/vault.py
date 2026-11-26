@@ -26,7 +26,8 @@ _COOKIE_KV_RE = re.compile(
     r"(?i)\b(cookie|set-cookie|sessionid|phpsessid|asp\.net_sessionid|csrftoken|jsessionid|connect\.sid|sid|jwt|auth_token|id_token|access_token)\s*[:=]\s*([^\r\n\"',;}]+)"
 )
 _AUTH_HEADER_RE = re.compile(
-    r'(?i)("?(?:authorization|proxy-authorization|x-api-key|x-goog-api-key|x-auth-token)"?\s*[:=]\s*"?)(?!Bearer\s+\[REDACTED)([^\r\n",}]+)'
+    r'(?:^|(?<=[\s{,`]))("?(?:authorization|proxy-authorization|x-api-key|x-goog-api-key|x-auth-token)"?\s*:\s*"?)(?!\*\*|\s*\[REDACTED)([^\r\n",}]+)',
+    re.IGNORECASE | re.MULTILINE,
 )
 _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 _PHONE_RE = re.compile(r"(?<!\w)(?:\+?\d{1,3}[-.\s]?)?(?:\(\d{3}\)|\d{3})[-.\s]\d{3}[-.\s]\d{4}(?!\w)")

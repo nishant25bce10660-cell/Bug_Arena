@@ -17,13 +17,27 @@ from bugarena.inspect.collectors import (
     collect_elements,
     collect_network_and_security,
     collect_performance_rendering_sensors,
+    collect_robots_and_sitemap,
+    collect_sources,
     enable_base_domains,
 )
-from bugarena.inspect.matrix import ALL_PANELS, InspectCoverageMatrix
+from bugarena.inspect.matrix import InspectCoverageMatrix
 from bugarena.inspect.runner import collect_cross_browser_diff, run_full_site_inspection
 from bugarena.truth import AgentScoreboard, Claim, ClaimLedger, EvidenceVault, TranscriptLogger
 
 _EXAGGERATED_ADJECTIVES_RE = re.compile(r"\b(always|all users|every user|catastrophic|100%)\b", re.IGNORECASE)
+_INSPECT_PANEL_NAMES = frozenset({
+    "elements",
+    "console",
+    "issues panel",
+    "network",
+    "security",
+    "application",
+    "sources",
+    "performance",
+    "rendering and layers",
+    "sensors and emulation",
+})
 
 
 def _panel_to_analyst(panel: str) -> str:
@@ -128,8 +142,12 @@ class SiteAuditCoordinator:
                     )
                     return bname, res
 
-            pairs = await asyncio.gather(*[_run_browser(b, c) for b, c in cursors.items()])
-            per_browser = dict(pairs)
+            per_browser: dict[str, dict[str, Any]] = {}
+            async with asyncio.TaskGroup() as tg:
+                tasks = [tg.create_task(_run_browser(b, c)) for b, c in cursors.items()]
+            for t in tasks:
+                bname, bres = t.result()
+                per_browser[bname] = bres
 
             raw_findings: list[dict[str, Any]] = []
             for res in per_browser.values():
@@ -280,10 +298,13 @@ class SiteAuditCoordinator:
     async def inspect_panel(self, run_id: str, browser: str, panel: str, args: dict[str, Any] | None = None) -> dict[str, Any]:
         """Targeted on-demand DevTools panel inspection on the granted browser."""
         sess = self.sessions.get_session(run_id)
-        if panel not in ALL_PANELS and not any(
-            k in panel.lower() for k in ("element", "console", "issue", "network", "security", "application", "performance", "render", "sensor")
+        p_low = panel.strip().lower()
+        if p_low not in _INSPECT_PANEL_NAMES and not any(
+            k in p_low for k in ("element", "console", "issue", "network", "security", "application", "source", "performance", "render", "sensor")
         ):
-            raise ValueError(f"Unknown panel {panel!r}; valid panels: {ALL_PANELS}")
+            raise ValueError(
+                f"Unknown panel {panel!r} (unsupported in single-browser inspect_panel); supported: {sorted(_INSPECT_PANEL_NAMES)}"
+            )
         policy: AccessPolicy = sess["policy"]
         run_dir = Path(sess["run_dir"])
         vault = EvidenceVault(run_dir)
@@ -299,16 +320,20 @@ class SiteAuditCoordinator:
             raise FileNotFoundError(f"Browser '{browser}' not found on host.")
 
         target_url = str((args or {}).get("url") or policy.site_url)
+        meta_res = await collect_robots_and_sitemap(target_url, vault)
+        robots_disallow: tuple[str, ...] = tuple(meta_res.get("robots_disallow", ()))
+        policy.assert_action_allowed("navigate", target_url=target_url, robots_disallow=robots_disallow)
         cursor = await BrowserCursor.launch(browser_name=browser, executable=by_name[browser].executable, headless=True)
         try:
             assert cursor.cdp is not None
             await enable_base_domains(cursor.cdp)
-            await cursor.navigate(target_url, policy=policy)
-            p_low = panel.lower()
+            await cursor.navigate(target_url, policy=policy, robots_disallow=robots_disallow)
             if "element" in p_low:
                 res = await collect_elements(cursor.cdp, vault, target_url, browser)
             elif "console" in p_low or "issue" in p_low:
                 res = collect_console_and_issues(cursor.cdp, vault, target_url, browser)
+            elif "source" in p_low:
+                res = await collect_sources(cursor.cdp, vault, target_url, browser)
             elif "network" in p_low or "security" in p_low:
                 res = collect_network_and_security(cursor.cdp, vault, target_url, browser)
             elif "application" in p_low:

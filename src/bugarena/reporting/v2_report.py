@@ -57,15 +57,20 @@ async def _chromium_render_pdf(html_path: Path, pdf_path: Path, executable: str,
         res = await cursor.cdp.send("Page.navigate", {"url": file_url})
         if isinstance(res, dict) and res.get("errorText"):
             raise RuntimeError(f"Page.navigate failed rendering PDF: {res['errorText']}")
+        loaded = False
         deadline = time.monotonic() + 8.0
         while time.monotonic() < deadline:
             if len(cursor.cdp.events.get("Page.loadEventFired", [])) > load_before:
+                loaded = True
                 break
             with contextlib.suppress(Exception):
                 st = await cursor.cdp.send("Runtime.evaluate", {"expression": "document.readyState", "returnByValue": True})
                 if st.get("result", {}).get("value") == "complete":
+                    loaded = True
                     break
             await asyncio.sleep(0.1)
+        if not loaded:
+            raise TimeoutError(f"Timed out waiting for PDF HTML render readiness on {html_path}")
         await asyncio.sleep(0.2)
         pdf_res = await cursor.cdp.send(
             "Page.printToPDF",
@@ -234,8 +239,16 @@ def build_v2_report_bundle(
         "## 1. Executive Summary",
         f"- **Severity Breakdown:** Critical={sev_counts['Critical']}, High={sev_counts['High']}, Medium={sev_counts['Medium']}, Low={sev_counts['Low']}",
     ]
+    if not chain["valid"]:
+        lines.append(f"- **Vault Verification Errors:** `{'; '.join(chain['errors'])}`")
     if analysis_summary and analysis_summary.get("writer_output"):
-        lines.append(f"- **Analysis Summary:** {analysis_summary['writer_output'].get('executive_summary', '')}")
+        w_out = analysis_summary["writer_output"]
+        lines.append(f"- **Analysis Summary ({w_out.get('mode', 'unknown')}):** {w_out.get('executive_summary', '')}")
+        if w_out.get("fallback_reason"):
+            lines.append(f"- **Analysis Fallback Reason:** `{w_out['fallback_reason']}`")
+    if analysis_summary and analysis_summary.get("critic_output"):
+        c_out = analysis_summary["critic_output"]
+        lines.append(f"- **Critic Verdict:** `{c_out.get('verdict', '')}` — {c_out.get('notes', '')}")
     lines.extend([
         "",
         "## 2. Scope, Authorization & Responsible Disclosure",
@@ -304,14 +317,17 @@ def build_v2_report_bundle(
         "run_id": rdir.name,
         "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "vault_valid": chain["valid"],
+        "vault_errors": list(chain["errors"]),
         "confirmed_count": len(confirmed),
         "unverified_count": len(unverified),
         "severity_counts": sev_counts,
+        "analysis": analysis_summary,
         "findings": [c.model_dump() for c in confirmed],
     }
     (rdir / "report.json").write_text(json.dumps(report_json, indent=2), encoding="utf-8")
 
     pdf_engine = "none"
+    pdf_error = ""
     if "pdf" in formats:
         pdf_path = rdir / "REPORT.pdf"
         installed = [b for b in discover_browsers() if b.found]
@@ -319,8 +335,29 @@ def build_v2_report_bundle(
             html_tmp = rdir / "_render_report.html"
             html_tmp.write_text(_render_html_from_report(rdir, md_text, confirmed, vault), encoding="utf-8")
             try:
-                asyncio.run(_chromium_render_pdf(html_tmp, pdf_path, installed[0].executable, installed[0].name))
+                def _run_pdf() -> None:
+                    asyncio.run(_chromium_render_pdf(html_tmp, pdf_path, installed[0].executable, installed[0].name))
+
+                try:
+                    asyncio.get_running_loop()
+                    in_loop = True
+                except RuntimeError:
+                    in_loop = False
+
+                if in_loop:
+                    import concurrent.futures
+
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                        pool.submit(_run_pdf).result()
+                else:
+                    _run_pdf()
                 pdf_engine = "chromium"
+            except Exception as exc:
+                if not allow_fallback_pdf:
+                    raise
+                pdf_error = str(exc)
+                pdf_path.write_bytes(_minimal_pdf_bytes("BugArena MCP v2 Report", md_text.splitlines()))
+                pdf_engine = "stdlib_fallback"
             finally:
                 if html_tmp.exists():
                     html_tmp.unlink()
@@ -337,5 +374,8 @@ def build_v2_report_bundle(
         "report_json": str(rdir / "report.json"),
         "confirmed_count": len(confirmed),
         "unverified_count": len(unverified),
+        "vault_errors": list(chain["errors"]),
+        "analysis": analysis_summary,
         "pdf_engine": pdf_engine,
+        "pdf_error": pdf_error,
     }

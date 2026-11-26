@@ -100,10 +100,11 @@ class SessionManager:
         tools_allowed = answers.get("tools_allowed", tool_filters.get("tools_allowed", "all"))
         raw_denied = answers.get("tools_denied", tool_filters.get("tools_denied", []))
         tools_denied = {raw_denied} if isinstance(raw_denied, str) else set(raw_denied or [])
-        if tools_allowed == "all" or not tools_allowed:
+        enforce_acl = bool(all_tool_names) or tools_allowed != "all" or bool(tools_denied)
+        if tools_allowed == "all" or tools_allowed is None:
             active_tools = [t for t in all_tool_names if t not in tools_denied]
         elif isinstance(tools_allowed, str):
-            active_tools = [tools_allowed] if tools_allowed not in tools_denied else []
+            active_tools = [tools_allowed] if (tools_allowed and tools_allowed not in tools_denied) else []
         else:
             active_tools = [t for t in tools_allowed if t not in tools_denied]
 
@@ -146,6 +147,7 @@ class SessionManager:
             "detected_browsers": {k: v.model_dump() for k, v in detected.items()},
             "answers": dict(answers),
             "active_tools": active_tools,
+            "enforce_tool_acl": enforce_acl,
             "cursors": {},
             "scope_file": str(scope_file),
             "profile_warning": profile_warning,

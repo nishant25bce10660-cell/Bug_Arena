@@ -255,14 +255,19 @@ class BrowserCursor:
                 text=True,
                 encoding="utf-8",
                 errors="replace",
+                timeout=5.0,
                 check=False,
             )
+            if res.returncode != 0:
+                raise RuntimeError(f"tasklist failed ({res.returncode}): {res.stderr[:200]}")
             for row in res.stdout.splitlines():
                 parts = [c.strip().strip('"') for c in row.split(",")]
                 if len(parts) >= 2 and parts[0].lower() in targets and parts[1].isdigit():
                     pids.add(int(parts[1]))
         else:
-            res = subprocess.run(["ps", "-eo", "pid,comm"], capture_output=True, text=True, check=False)
+            res = subprocess.run(["ps", "-eo", "pid,comm"], capture_output=True, text=True, timeout=5.0, check=False)
+            if res.returncode != 0:
+                raise RuntimeError(f"ps failed ({res.returncode}): {res.stderr[:200]}")
             for row in res.stdout.splitlines()[1:]:
                 cols = row.strip().split(None, 1)
                 if len(cols) == 2 and cols[0].isdigit() and any(t in cols[1].lower() for t in targets):
@@ -408,6 +413,7 @@ class BrowserCursor:
         *,
         policy: AccessPolicy,
         robots_disallow: Sequence[str] | None = None,
+        readiness_timeout: float = 8.0,
     ) -> dict[str, Any]:
         policy.assert_action_allowed("navigate", target_url=url, robots_disallow=robots_disallow)
         min_gap = 1.0 / max(policy.max_rps, 0.1)
@@ -428,9 +434,11 @@ class BrowserCursor:
                 await asyncio.sleep(0.25)
                 continue
             raise RuntimeError(f"Page.navigate failed for {url}: {err_txt}")
-        deadline = time.monotonic() + 8.0
+        loaded = False
+        deadline = time.monotonic() + readiness_timeout
         while time.monotonic() < deadline:
             if len(self.cdp.events.get("Page.loadEventFired", [])) > load_before:
+                loaded = True
                 break
             with contextlib.suppress(Exception):
                 st = await self.cdp.send(
@@ -446,8 +454,11 @@ class BrowserCursor:
                     and val.get("state") == "complete"
                     and str(val.get("href", "")).startswith(("http://", "https://"))
                 ):
+                    loaded = True
                     break
             await asyncio.sleep(0.1)
+        if not loaded:
+            raise TimeoutError(f"Timed out waiting for page load readiness on {url}")
         await asyncio.sleep(0.15)
         if not self.headless:
             await self.inject_visual_badge()

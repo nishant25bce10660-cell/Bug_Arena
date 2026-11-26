@@ -106,7 +106,7 @@ async def test_full_v2_site_audit_and_verify_pack_across_installed_browsers(tmp_
         assert Path(vp["verify_script"]).is_file()
         assert Path(vp["verify_prompt"]).is_file()
 
-        sb = await agent_scoreboard(rid)
+        sb = await agent_scoreboard(rid, session_token=tok)
         assert len(sb["agents"]) >= 1
 
         # Claim retraction preserves log and adjusts score cleanly

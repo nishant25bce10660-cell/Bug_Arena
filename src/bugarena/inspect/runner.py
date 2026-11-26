@@ -142,19 +142,19 @@ async def run_full_site_inspection(
     matrix = InspectCoverageMatrix(vault.run_dir)
     all_findings: list[dict[str, Any]] = []
 
-    await enable_base_domains(cursor.cdp)
-    await cursor.navigate(url, policy=policy)
-    await asyncio.sleep(0.25)
-
     meta_res = await collect_robots_and_sitemap(url, vault)
     robots_disallow: tuple[str, ...] = tuple(meta_res.get("robots_disallow", ()))
+    domain_failures = await enable_base_domains(cursor.cdp)
+    await cursor.navigate(url, policy=policy, robots_disallow=robots_disallow)
+    await asyncio.sleep(0.25)
+
     screenshots = await capture_screenshots(cursor, vault, url, label=cursor.cursor_name)
     transcript.log(
         agent="inspect",
         cursor=cursor.cursor_name,
         tool="cdp.navigate_and_snapshot",
         args={"url": url},
-        result_bytes=json.dumps({"meta": meta_res["evidence_id"], **screenshots}),
+        result_bytes=json.dumps({"meta": meta_res["evidence_id"], "domain_failures": domain_failures, **screenshots}),
     )
 
     elem_res = await collect_elements(cursor.cdp, vault, url, cursor.browser_name)

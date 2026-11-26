@@ -53,15 +53,19 @@ BUGARENA_PRIMARY_TOOLS: tuple[str, ...] = (
 
 _DANGEROUS_CALLS = frozenset({
     "eval", "exec", "compile", "__import__", "system", "popen", "Popen", "run",
-    "getattr", "setattr", "rmtree", "unlink", "remove", "write_text", "write_bytes",
-    "execv", "execve", "execl", "spawnl", "create_subprocess_exec", "create_subprocess_shell",
+    "getattr", "setattr", "vars", "globals", "rmtree", "unlink", "remove", "write_text", "write_bytes",
+    "replace", "rename", "move", "copy", "copy2", "copyfile", "copytree",
+    "execv", "execve", "execvp", "execl", "execlp", "spawnl", "spawnvp", "posix_spawn",
+    "create_subprocess_exec", "create_subprocess_shell",
 })
 _DANGEROUS_MODULES = frozenset({
     "subprocess", "ctypes", "cffi", "pyautogui", "pynput", "pty",
     "importlib", "runpy", "pickle", "marshal", "urllib", "http", "socket",
     "httpx", "requests", "aiohttp", "websockets",
+    "builtins", "sys", "ftplib", "smtplib", "xmlrpc", "webbrowser",
 })
 _VALID_PKG_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+_MAX_ZIP_BYTES = 10 * 1024 * 1024
 
 
 def _intake_to_quarantine(skill_source: str | Path, q_dir: Path) -> Path:
@@ -82,11 +86,15 @@ def _intake_to_quarantine(skill_source: str | Path, q_dir: Path) -> Path:
         dest = q_dir / local.stem
         dest.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(local, "r") as zf:
+            total_bytes = 0
             for member in zf.infolist():
                 target = validate_safe_path(dest, member.filename)
                 if member.is_dir():
                     target.mkdir(parents=True, exist_ok=True)
                 else:
+                    total_bytes += max(0, int(member.file_size))
+                    if member.file_size > _MAX_ZIP_BYTES or total_bytes > _MAX_ZIP_BYTES:
+                        raise ValueError(f"Zip skill archive exceeds {_MAX_ZIP_BYTES} byte cap")
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_bytes(zf.read(member))
         return dest
@@ -156,6 +164,15 @@ def _static_security_scan(skill_dir: Path) -> list[dict[str, str]]:
                 )
                 if cname in _DANGEROUS_CALLS:
                     hazards.append({"file": rel, "hazard": "dangerous_call", "detail": f"call to {cname}()"})
+                if cname == "open":
+                    mode_val = ""
+                    if len(node.args) >= 2 and isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, str):
+                        mode_val = node.args[1].value
+                    for kw in node.keywords:
+                        if kw.arg == "mode" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                            mode_val = kw.value.value
+                    if any(ch in mode_val for ch in ("w", "a", "x", "+")):
+                        hazards.append({"file": rel, "hazard": "dangerous_call", "detail": f"write-mode open({mode_val!r})"})
     return hazards
 
 
@@ -217,22 +234,28 @@ def _check_dependency_conflicts(deps: list[str]) -> list[str]:
 
 
 def _sandbox_smoke_test(skill_dir: Path, tools: list[str]) -> tuple[bool, str]:
-    """Run read-only smoke test inside a sanitized child Python process."""
-    if not (skill_dir / "skill.py").is_file():
-        return True, "No skill.py entrypoint; manifest-only smoke passed."
+    """Run read-only smoke test inside a sanitized child Python process across discovered tool modules."""
+    py_mods = sorted(skill_dir.rglob("*.py"))
+    entry = skill_dir / "skill.py"
+    candidates = [entry] if entry.is_file() else [p for p in py_mods if p.name != "__init__.py"]
+    if not candidates:
+        return True, "No Python tool entrypoint; manifest-only smoke passed."
     probe = (
-        "import importlib.util, json\n"
-        "spec = importlib.util.spec_from_file_location('q_skill', 'skill.py')\n"
-        "mod = importlib.util.module_from_spec(spec)\n"
-        "spec.loader.exec_module(mod)\n"
-        "tools = getattr(mod, 'TOOLS', {})\n"
-        "out = {k: (v() if callable(v) else None) for k, v in tools.items()}\n"
-        "print(json.dumps(list(out.keys())))\n"
+        "import importlib.util, json, sys\n"
+        "loaded = []\n"
+        "for path in sys.argv[1:]:\n"
+        "  spec = importlib.util.spec_from_file_location('q_skill', path)\n"
+        "  mod = importlib.util.module_from_spec(spec)\n"
+        "  spec.loader.exec_module(mod)\n"
+        "  tools = getattr(mod, 'TOOLS', {})\n"
+        "  out = {k: (v() if callable(v) else None) for k, v in tools.items()}\n"
+        "  loaded.extend(out.keys())\n"
+        "print(json.dumps(loaded))\n"
     )
     env = sanitize_env(dict(os.environ), allowlist_only=True)
     try:
         res = subprocess.run(
-            [sys.executable, "-c", probe],
+            [sys.executable, "-c", probe, *(str(c.relative_to(skill_dir)) for c in candidates)],
             cwd=str(skill_dir),
             env=env,
             capture_output=True,
@@ -353,6 +376,18 @@ def merge_both_skills(
                 "report_path": str(rep),
             }
 
+        if not dry_run and not approved:
+            rep = _write_merge_report("APPROVAL_REQUIRED")
+            return {
+                "status": "APPROVAL_REQUIRED",
+                "primary_mcp": "bugarena",
+                "skill_name": skill_key,
+                "security_hazards": hazards,
+                "dependency_conflicts": dep_conflicts,
+                "collisions": collisions,
+                "report_path": str(rep),
+            }
+
         smoke_ok, smoke_msg = _sandbox_smoke_test(q_skill, inventory["tools"])
         if not smoke_ok:
             rep = _write_merge_report("SMOKE_TEST_FAILED", smoke_note=smoke_msg)
@@ -369,7 +404,7 @@ def merge_both_skills(
         snap_dir = out_dir / "skill_snapshot"
         if snap_dir.exists():
             shutil.rmtree(snap_dir)
-        shutil.copytree(q_skill, snap_dir)
+        shutil.copytree(q_skill, snap_dir, symlinks=True)
 
         manifest = {
             "package_name": pkg_name,

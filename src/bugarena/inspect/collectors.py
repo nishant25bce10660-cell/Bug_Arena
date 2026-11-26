@@ -15,9 +15,46 @@ from bugarena.browser.cursor import AccessPolicy, AuthorizationError, BrowserCur
 from bugarena.truth.transcript import TranscriptLogger
 from bugarena.truth.vault import EvidenceVault, scrub_evidence_text
 
+_SENSITIVE_HEADER_KEYS = frozenset({
+    "cookie",
+    "set-cookie",
+    "authorization",
+    "proxy-authorization",
+    "x-api-key",
+    "x-goog-api-key",
+    "x-auth-token",
+})
+
 
 def _clean_str(val: str) -> str:
     return scrub_evidence_text(val)[0] if val else ""
+
+
+def _scrub_headers(headers: dict[str, Any]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for k, v in headers.items():
+        k_str = str(k)
+        out[k_str] = "[REDACTED]" if k_str.lower() in _SENSITIVE_HEADER_KEYS else _clean_str(str(v))
+    return out
+
+
+def _same_origin(base_url: str, target_url: str) -> bool:
+    b = urlparse(base_url)
+    t = urlparse(target_url)
+    if b.scheme not in ("http", "https") or t.scheme != b.scheme:
+        return False
+    if t.username or t.password:
+        return False
+    return (t.hostname or "").lower() == (b.hostname or "").lower() and t.port == b.port
+
+
+def _extract_eval_value(res: dict[str, Any], default: Any = None) -> Any:
+    if isinstance(res, dict) and res.get("exceptionDetails"):
+        details = res["exceptionDetails"]
+        exc_msg = details.get("exception", {}).get("description") or details.get("text") or "JS evaluation error"
+        raise CDPError(f"Runtime.evaluate failed: {exc_msg}")
+    val = res.get("result", {}).get("value") if isinstance(res, dict) else None
+    return default if val is None else val
 
 
 def _finding(
@@ -63,8 +100,9 @@ def _finding(
     }
 
 
-async def enable_base_domains(cdp: CDPClient) -> None:
-    """Enable core CDP telemetry domains before initial navigation."""
+async def enable_base_domains(cdp: CDPClient) -> list[dict[str, str]]:
+    """Enable core CDP telemetry domains before initial navigation, recording any unsupported failures."""
+    failures: list[dict[str, str]] = []
     for method in (
         "Page.enable",
         "Runtime.enable",
@@ -76,8 +114,11 @@ async def enable_base_domains(cdp: CDPClient) -> None:
         "Performance.enable",
         "Debugger.enable",
     ):
-        with contextlib.suppress(CDPError):
+        try:
             await cdp.send(method)
+        except CDPError as exc:
+            failures.append({"domain": method, "error": str(exc)})
+    return failures
 
 
 async def collect_elements(
@@ -107,7 +148,7 @@ async def collect_elements(
     })()
     """
     res = await cdp.send("Runtime.evaluate", {"expression": js, "returnByValue": True})
-    val = res.get("result", {}).get("value", {}) or {}
+    val = _extract_eval_value(res, {}) or {}
     ev = vault.record_artifact(json.dumps(val, indent=2), ext=".json", tool_name="cdp.elements", args_summary=url)
     findings: list[dict[str, Any]] = []
 
@@ -275,9 +316,9 @@ async def collect_sources(
 ) -> dict[str, Any]:
     """Sources domain: parsed scripts, sourceMappingURL discovery, unused JS coverage, deprecated APIs."""
     parsed = cdp.events.get("Debugger.scriptParsed", [])
-    origin = f"{urlparse(base_url).scheme}://{urlparse(base_url).netloc}"
     scripts_info: list[dict[str, Any]] = []
     source_maps: dict[str, str] = {}
+    source_map_errors: list[dict[str, str]] = []
     findings: list[dict[str, Any]] = []
 
     with contextlib.suppress(CDPError):
@@ -287,16 +328,18 @@ async def collect_sources(
     seen_urls: set[str] = set()
     for sc in parsed:
         surl = sc.get("url", "")
-        if not surl or not surl.startswith(origin) or surl in seen_urls:
+        if not surl or not _same_origin(base_url, surl) or surl in seen_urls:
             continue
         seen_urls.add(surl)
         src_map = sc.get("sourceMapURL", "")
         if src_map:
             source_maps[surl] = urljoin(surl, src_map)
         src_text = ""
-        with contextlib.suppress(CDPError):
+        try:
             got = await cdp.send("Debugger.getScriptSource", {"scriptId": sc["scriptId"]})
             src_text = got.get("scriptSource", "")
+        except CDPError as exc:
+            source_map_errors.append({"url": surl, "error": str(exc)})
         scripts_info.append({"url": surl, "sourceMapURL": source_maps.get(surl, ""), "length": len(src_text)})
 
     cov_res: dict[str, Any] = {}
@@ -307,9 +350,9 @@ async def collect_sources(
     deprecated_hits: list[dict[str, Any]] = []
     for sc in parsed:
         surl = sc.get("url", "")
-        if not surl.startswith(origin):
+        if not _same_origin(base_url, surl):
             continue
-        with contextlib.suppress(CDPError):
+        try:
             src_text = (await cdp.send("Debugger.getScriptSource", {"scriptId": sc["scriptId"]})).get("scriptSource", "")
             for line_no, raw_ln in enumerate(src_text.splitlines(), 1):
                 if "document.write(" in raw_ln:
@@ -320,20 +363,25 @@ async def collect_sources(
                         "snippet": raw_ln.strip()[:120],
                     })
                     break
+        except CDPError as exc:
+            source_map_errors.append({"url": surl, "error": str(exc)})
 
     source_map_contents: dict[str, dict[str, Any]] = {}
     if source_maps:
         is_loopback = urlparse(base_url).hostname in ("127.0.0.1", "localhost")
         async with httpx.AsyncClient(timeout=4.0, trust_env=not is_loopback) as client:
             for js_url, map_url in source_maps.items():
-                if not map_url.startswith(origin):
+                if not _same_origin(base_url, map_url):
+                    source_map_errors.append({"url": map_url, "error": "Off-origin sourceMapURL blocked"})
                     continue
-                with contextlib.suppress(httpx.HTTPError, ValueError):
+                try:
                     resp = await client.get(map_url)
                     if resp.status_code == 200 and len(resp.content) <= 2_000_000:
                         parsed_map = resp.json()
                         if isinstance(parsed_map, dict) and "mappings" in parsed_map:
                             source_map_contents[js_url] = parsed_map
+                except (httpx.HTTPError, ValueError) as exc:
+                    source_map_errors.append({"url": map_url, "error": str(exc)})
 
     ev = vault.record_artifact(
         json.dumps(
@@ -342,6 +390,7 @@ async def collect_sources(
                 "coverage_entries": len(cov_res.get("result", [])),
                 "deprecated_apis": deprecated_hits,
                 "source_maps_fetched": sorted(source_map_contents.keys()),
+                "source_map_errors": source_map_errors,
             },
             indent=2,
         ),
@@ -371,6 +420,7 @@ async def collect_sources(
         "evidence_id": ev.evidence_id,
         "source_maps": source_maps,
         "source_map_contents": source_map_contents,
+        "source_map_errors": source_map_errors,
         "scripts": scripts_info,
         "findings": findings,
     }
@@ -407,12 +457,12 @@ def collect_network_and_security(
             doc_headers = headers
 
         har_entries.append({
-            "url": req_url,
+            "url": _clean_str(req_url),
             "method": req_ev.get("request", {}).get("method", "GET"),
             "status": status,
             "duration_ms": duration_ms,
             "failed": fail_ev.get("errorText") if fail_ev else None,
-            "headers": headers,
+            "headers": _scrub_headers(headers),
         })
 
     ev = vault.record_artifact(
@@ -447,7 +497,7 @@ def collect_network_and_security(
             findings.append(
                 _finding(
                     panel="Network",
-                    title=f"Slow API response ({entry['duration_ms']} ms): {u_path}",
+                    title=f"Slow API response (>=300 ms): {u_path}",
                     severity="Medium",
                     detail=f"{u} took {entry['duration_ms']} ms",
                     evidence_ids=[ev.evidence_id],
@@ -525,7 +575,12 @@ def collect_network_and_security(
                 )
             )
 
-    return {"evidence_id": ev.evidence_id, "har_entries": har_entries, "doc_headers": doc_headers, "findings": findings}
+    return {
+        "evidence_id": ev.evidence_id,
+        "har_entries": har_entries,
+        "doc_headers": _scrub_headers(doc_headers),
+        "findings": findings,
+    }
 
 
 async def collect_application(

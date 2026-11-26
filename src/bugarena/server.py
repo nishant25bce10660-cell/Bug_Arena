@@ -707,6 +707,22 @@ _PRESERVED_PATH_KEYS = frozenset({
 })
 
 
+_SENSITIVE_DICT_KEYS = frozenset({
+    "cookie",
+    "set-cookie",
+    "authorization",
+    "proxy-authorization",
+    "x-api-key",
+    "x-goog-api-key",
+    "x-auth-token",
+    "token",
+    "secret",
+    "password",
+    "api_key",
+    "apikey",
+})
+
+
 def _scrub_payload(obj: Any, base_dir: Path | str | None = None) -> Any:
     from bugarena.truth.vault import scrub_evidence_text
 
@@ -718,10 +734,15 @@ def _scrub_payload(obj: Any, base_dir: Path | str | None = None) -> Any:
     if isinstance(obj, list):
         return [_scrub_payload(item, base_dir=base_dir) for item in obj]
     if isinstance(obj, dict):
-        return {
-            k: (v if k in _PRESERVED_PATH_KEYS else _scrub_payload(v, base_dir=base_dir))
-            for k, v in obj.items()
-        }
+        out: dict[Any, Any] = {}
+        for k, v in obj.items():
+            if k in _PRESERVED_PATH_KEYS:
+                out[k] = v
+            elif isinstance(k, str) and k.lower() in _SENSITIVE_DICT_KEYS and isinstance(v, str) and v:
+                out[k] = "[REDACTED]"
+            else:
+                out[k] = _scrub_payload(v, base_dir=base_dir)
+        return out
     return obj
 
 
@@ -732,7 +753,7 @@ def _authorize_v2_tool(run_id: str, tool_name: str, session_token: str) -> dict[
     if not session_token or not secrets.compare_digest(session_token, sess["session_token"]):
         raise PermissionError("Invalid session_token; run session_confirm first.")
     active_tools = sess.get("active_tools")
-    if active_tools and tool_name not in active_tools:
+    if active_tools is not None and (sess.get("enforce_tool_acl") or active_tools) and tool_name not in active_tools:
         raise PermissionError(f"Tool '{tool_name}' is not permitted by session active_tools / tools_denied.")
     return sess
 
@@ -980,6 +1001,8 @@ async def report_build(
         analysis_summary=analysis,
         allow_fallback_pdf=True,
     )
+    if analysis is not None:
+        res["analysis"] = analysis
     return _scrub_payload(res)
 
 
@@ -1013,10 +1036,7 @@ async def claim_retract(
 async def agent_scoreboard(run_id: str | None = None, session_token: str = "") -> dict[str, Any]:
     """Return agent reliability scoreboard for run_id or cumulative .bugarena/agent_scores.json."""
     if run_id:
-        if session_token:
-            sess = _authorize_v2_tool(run_id, "agent_scoreboard", session_token)
-        else:
-            sess = _SITE_COORDINATOR.sessions.get_session(run_id)
+        sess = _authorize_v2_tool(run_id, "agent_scoreboard", session_token)
         sb = AgentScoreboard(Path(sess["run_dir"]))
         return _scrub_payload({"run_id": run_id, "agents": {k: v.model_dump() for k, v in sb.all_scores().items()}})
     import json
