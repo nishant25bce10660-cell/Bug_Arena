@@ -52,8 +52,17 @@ _BUG_REGISTRY: OrderedDict[str, BugSpec] = OrderedDict()
 def _store_tournament(t_id: str, tournament: TournamentRecord) -> None:
     with _REGISTRY_LOCK:
         _TOURNAMENT_REGISTRY[t_id] = tournament
-        if len(_TOURNAMENT_REGISTRY) > MAX_REGISTRY_SIZE:
+        _TOURNAMENT_REGISTRY.move_to_end(t_id)
+        while len(_TOURNAMENT_REGISTRY) > MAX_REGISTRY_SIZE:
             _TOURNAMENT_REGISTRY.popitem(last=False)
+
+
+def _get_tournament(t_id: str) -> TournamentRecord | None:
+    with _REGISTRY_LOCK:
+        rec = _TOURNAMENT_REGISTRY.get(t_id)
+        if rec is not None:
+            _TOURNAMENT_REGISTRY.move_to_end(t_id)
+        return rec
 
 
 def _repro_key(repo_path: Path | str, test_rel_path: str) -> str:
@@ -88,8 +97,17 @@ def _lookup_repro(repo_path: Path | str, test_rel_path: str | None = None) -> Re
 def _store_bug(bug_id: str, spec: BugSpec) -> None:
     with _REGISTRY_LOCK:
         _BUG_REGISTRY[bug_id] = spec
-        if len(_BUG_REGISTRY) > MAX_REGISTRY_SIZE:
+        _BUG_REGISTRY.move_to_end(bug_id)
+        while len(_BUG_REGISTRY) > MAX_REGISTRY_SIZE:
             _BUG_REGISTRY.popitem(last=False)
+
+
+def _get_bug(bug_id: str) -> BugSpec | None:
+    with _REGISTRY_LOCK:
+        spec = _BUG_REGISTRY.get(bug_id)
+        if spec is not None:
+            _BUG_REGISTRY.move_to_end(bug_id)
+        return spec
 
 
 @mcp.tool()
@@ -301,8 +319,7 @@ def evaluate_patches(
     """
     Evaluate all tournament candidate patches inside isolated ephemeral sandboxes.
     """
-    with _REGISTRY_LOCK:
-        tournament = _TOURNAMENT_REGISTRY.get(tournament_id)
+    tournament = _get_tournament(tournament_id)
     if not tournament:
         return {"error": f"Tournament ID '{tournament_id}' not found."}
 
@@ -329,17 +346,21 @@ def evaluate_patches(
         repro_spec=repro_spec,
     )
 
-    updated_tournament = TournamentRecord(
-        tournament_id=tournament.tournament_id,
-        repo_path=tournament.repo_path,
-        candidates=tournament.candidates,
-        evaluations=evaluations,
-        champion_candidate_id=champion_id,
-        bug_spec=tournament.bug_spec,
-        repro_spec=tournament.repro_spec or repro_spec,
-        bug_description=tournament.bug_description,
-    )
-    _store_tournament(tournament_id, updated_tournament)
+    with _REGISTRY_LOCK:
+        latest = _TOURNAMENT_REGISTRY.get(tournament_id) or tournament
+        updated_tournament = TournamentRecord(
+            tournament_id=latest.tournament_id,
+            repo_path=latest.repo_path,
+            candidates=latest.candidates,
+            evaluations=evaluations,
+            champion_candidate_id=champion_id,
+            bug_spec=latest.bug_spec,
+            repro_spec=latest.repro_spec or repro_spec,
+            bug_description=latest.bug_description,
+            report_file_path=latest.report_file_path,
+        )
+        _TOURNAMENT_REGISTRY[tournament_id] = updated_tournament
+        _TOURNAMENT_REGISTRY.move_to_end(tournament_id)
 
     return {
         "tournament_id": tournament_id,
@@ -358,8 +379,7 @@ def generate_fix_report(
     Generate an actionable tournament diagnostic report and git patch,
     and save the report to a markdown (.md) file on disk.
     """
-    with _REGISTRY_LOCK:
-        tournament = _TOURNAMENT_REGISTRY.get(tournament_id)
+    tournament = _get_tournament(tournament_id)
     if not tournament:
         return {"error": f"Tournament ID '{tournament_id}' not found."}
 
