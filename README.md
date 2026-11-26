@@ -8,7 +8,7 @@ A Python-focused Model Context Protocol server for evidence-driven audits and re
 
 [Quickstart](#quickstart) · [Features](#features) · [Tools](#mcp-tools) · [Proof](docs/evidence.md) · [Architecture](docs/architecture.md) · [Contributing](CONTRIBUTING.md)
 
-**Python 3.11+ · 13 MCP tools · 4 repair personas · 9 audit sweep roles**
+**Python 3.11+ · 26 MCP tools · 4 repair personas · 29 audit & site specialist roles**
 
 </div>
 
@@ -106,7 +106,7 @@ For clients accepting `mcpServers`, replace the executable path below with your 
 }
 ```
 
-On macOS/Linux use `<absolute-repo-path>/.venv/bin/python`. Reload the client's MCP connection and inspect its tool list for the 13 tools below.
+On macOS/Linux use `<absolute-repo-path>/.venv/bin/python`. Reload the client's MCP connection and inspect its tool list for the 26 tools below.
 
 </details>
 

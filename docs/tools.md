@@ -136,3 +136,19 @@ async def fix_loop_start(run_id: str, finding_ids: list[str] | None=None, auto_g
 Execute test-first fix evaluation over confirmed ledger findings (LLM generation gated by auto_generate).
 
 [Implementation](../src/bugarena/server.py#L769)
+
+## v2 Site Audit, Truth Protocol, Verification, & Skill Merge Tools
+
+- `session_prepare(user_hint=None)`: Detect Chrome/Brave/Helium, check API key presence, return 13-question pre-start gate.
+- `session_confirm(answers)`: Validate answers, force passive mode when unauthorized, write `scope_and_authorization.md`, issue `session_token`.
+- `site_audit_start(url, run_id, session_token, headless=True, panels='all')`: Launch isolated `[mcp_<browser>]` cursors and run DevTools audit.
+- `site_audit_round(run_id, headless=True, panels='all')`: Run an extra multi-browser verification and honesty-audit round.
+- `site_audit_status(run_id)`: Inspect claim counts and `EvidenceVault` SHA-256 chain status.
+- `browser_cursor_list(run_id)`: List active/closed `[mcp_<browser>]` cursor PIDs and ports.
+- `inspect_panel(run_id, browser, panel, args=None)`: Inspect a targeted DevTools panel on a granted browser.
+- `project_audit_start(project_path, site_run_id='', mode='read_only')`: Run local project audit and link site frames via source maps.
+- `report_build(run_id, formats=['md', 'pdf'], use_llm_analysis=False)`: Render `REPORT.md`, Chromium `REPORT.pdf`, `report.json`, and finding folders from `CONFIRMED` claims only.
+- `verify_pack_build(run_id)`: Generate offline stdlib-only `verify/verify.py`, `claims.json`, `README.txt`, and `VERIFY_PROMPT.md`.
+- `claim_retract(run_id, claim_id, reason, agent_name='self')`: Retract a claim permanently into `agents/corrections_log.md`.
+- `agent_scoreboard(run_id=None)`: Return per-agent honesty, precision, and Brier calibration scores.
+- `merge_both_skills(skill_source, name=None, dry_run=True, approved=False, output_root='merged')`: Quarantine, scan, compat-test, and merge external skills with BugArena remaining primary.

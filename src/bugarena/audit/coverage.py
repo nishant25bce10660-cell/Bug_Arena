@@ -136,9 +136,16 @@ def build_coverage_matrix(
     for area_name in sorted(area_files):
         files_sorted = tuple(sorted(area_files[area_name]))
         module_tokens = [
-            src_f.removeprefix("src/").removesuffix(".py").replace("/", ".").lower()
-            for src_f in files_sorted
-            if src_f.endswith(".py")
+            *(
+                src_f.removeprefix("src/").removesuffix(".py").replace("/", ".").lower()
+                for src_f in files_sorted
+                if src_f.endswith(".py")
+            ),
+            *(
+                [f"bugarena.{area_name.lower()}"]
+                if any(f.startswith("src/bugarena/") for f in files_sorted)
+                else []
+            ),
         ]
         file_tokens = [
             Path(src_f).name.lower()

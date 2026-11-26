@@ -1,15 +1,15 @@
 # BugArena MCP — Project & Audit Report
 
-- **Generated (UTC):** `2026-11-26T11:45:35+00:00`
+- **Generated (UTC):** `2026-11-26T11:53:05+00:00`
 - **Repository:** `MCP server`
-- **Branch / HEAD:** `upgrade/bugarena-agents` @ `4066f1c`
+- **Branch / HEAD:** `upgrade/bugarena-agents` @ `f1eabe9`
 - **Tracked Files:** `183` across `23` audited areas
 - **Auto-Update Trigger:** `.githooks/pre-commit` + `scripts/update_project_report.py` + `AGENTS.md`
 
 ## Audit Verdict
-- **Overall Status:** **ATTENTION REQUIRED — See Open Findings or Failing Checks**
+- **Overall Status:** **PASS — Clean Audit & Verification**
 - **Audit Engine Summary:** `ROUND 1 | new: 0 | confirmed: 0 | dismissed: 0 | fixed: 0 | open: 0`
-- **Module Coverage:** `95.7%` (`100.0%` statically read)
+- **Module Coverage:** `100.0%` (`100.0%` statically read)
 - **Open Confirmed Bugs:** `0` | **Dismissed:** `0` | **Unverified:** `0`
 - **Historical Ledger & Fix History:** `75` reconciled fixes (`40` `fix(...)` commits in git history; `2` prior dismissed)
 
@@ -17,7 +17,7 @@
 | Check | Result | Details |
 | :--- | :--- | :--- |
 | `ruff check src tests scripts` | **PASS (0 issues)** | `All checks passed!` |
-| `pytest -q -m "not slow and not browser"` | **PASS (135 passed, 6 deselected in 20.92s)** | `Isolated unit + regression suites` |
+| `pytest -q -m "not slow and not browser"` | **PASS (135 passed, 6 deselected in 22.47s)** | `Isolated unit + regression suites` |
 | `LoopOperator` Read-Only Audit | **PASS** | `23 areas, 0 open confirmed` |
 
 ## MCP Tools
@@ -72,7 +72,7 @@ Total registered tools: **26**
 | `sandbox` | 4 | YES | YES | - |
 | `scripts` | 3 | YES | YES | - |
 | `server` | 1 | YES | YES | - |
-| `skills_merge` | 2 | YES | NO | - |
+| `skills_merge` | 2 | YES | YES | - |
 | `synthesizer` | 3 | YES | YES | - |
 | `tests` | 62 | YES | YES | - |
 | `tournament` | 3 | YES | YES | - |
@@ -83,6 +83,7 @@ Total registered tools: **26**
 No open audit findings detected in the current codebase.
 
 ## Recent Changes
+- `f1eabe9 feat(v2): add quarantined merge_both_skills pipeline and wire all 26 MCP tools`
 - `4066f1c feat(reporting,verify): add v2 REPORT.md/Chromium PDF bundle, finding folders, and stdlib offline verify pack`
 - `897c0be feat(v2): add site analyst roster, SiteAuditCoordinator, VLQ sourcemap linker, and Grok/Gemini cross-vendor analysis`
 - `a4ef4b1 feat(inspect): add 14 DevTools CDP collectors, coverage_matrix.md, and planted-bug fixture site`
@@ -94,17 +95,13 @@ No open audit findings detected in the current codebase.
 - `29f57e3 feat(reporting): add audited PROJECT_REPORT.md generator and pre-commit hook`
 - `e3c026e fix(audit): preserve leading dotfiles in classify_area and guard post-fix detectors`
 - `d2ba121 fix(audit): fix log_parser detector match, patch_parser probe, and agents/audit circular import`
-- `4cf3bdb fix(ECC-020): escape markdown tables, use adaptive fences, show disqualification, frame prompts`
 
 ## Working Tree Snapshot (`git status --short`)
 ```text
-M  .agents/skills/bugarena-repair/SKILL.md
+M  .gitignore
 M  README.md
-M  src/bugarena/server.py
-A  src/bugarena/skills_merge/__init__.py
-A  src/bugarena/skills_merge/pipeline.py
-A  tests/unit/test_phase10_merge_skills.py
-A  tests/unit/test_v2_server_tools.py
+M  docs/tools.md
+M  src/bugarena/audit/coverage.py
 ```
 
 ## How This Report Stays Updated

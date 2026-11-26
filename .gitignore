@@ -41,6 +41,8 @@ htmlcov/
 .ruff_cache/
 .bugarena/
 reports/
+bugarena_reports/
+merged/
 workspace_temp/
 tests/repro_temp/
 
