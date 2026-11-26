@@ -59,102 +59,154 @@ class EphemeralSandboxManager:
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
+    @staticmethod
+    def _clean_diff_path(raw_header_rest: str, prefix: str) -> str:
+        """Strip optional timestamps/quotes/whitespace and remove a/ or b/ prefix once."""
+        # Unified diffs often carry `path\t2026-01-01 ...`
+        path_part = raw_header_rest.split("\t", 1)[0].strip()
+        if path_part.endswith('"') and path_part.startswith('"'):
+            path_part = path_part[1:-1]
+        if path_part == "/dev/null":
+            return "/dev/null"
+        return path_part.removeprefix(prefix)
+
     def apply_patch(self, sandbox_path: Path, patch_diff: str) -> None:
         """
-        Apply a unified diff patch to the target sandbox workspace.
+        Apply a unified diff patch to the target sandbox workspace using a strict hunk state machine.
         """
         if not patch_diff or not patch_diff.strip():
             return
 
-        # Simple unified diff parser & applier
-        # Format:
-        # --- a/path
-        # +++ b/path
-        # @@ -start,count +start,count @@
-        lines = patch_diff.splitlines()
+        lines = patch_diff.replace("\r\n", "\n").splitlines()
         i = 0
         while i < len(lines):
             line = lines[i]
-            if line.startswith(("--- a/", "--- ")):
-                # Next line should be +++ b/path
-                target_rel = None
-                if i + 1 < len(lines) and lines[i + 1].startswith("+++ "):
-                    target_rel = lines[i + 1][4:].strip()
-                    target_rel = target_rel.removeprefix("b/")
-                    i += 2
-                else:
-                    i += 1
-                    continue
+            # File header detection requires paired --- and +++ lines outside hunks
+            if line.startswith("--- ") and i + 1 < len(lines) and lines[i + 1].startswith("+++ "):
+                old_rel = self._clean_diff_path(line[4:], "a/")
+                new_rel = self._clean_diff_path(lines[i + 1][4:], "b/")
+                i += 2
 
-                if not target_rel:
-                    continue
+                is_delete = new_rel == "/dev/null"
+                target_rel = old_rel if is_delete else new_rel
+                if not target_rel or target_rel == "/dev/null":
+                    raise ValueError("Patch header specifies invalid empty or /dev/null target")
 
                 target_file = validate_safe_path(sandbox_path, target_rel)
                 if not target_file.exists():
-                    target_file.parent.mkdir(parents=True, exist_ok=True)
                     original_lines: list[str] = []
+                    had_trailing_newline = True
                 else:
-                    original_lines = target_file.read_text(encoding="utf-8").splitlines()
+                    raw_text = target_file.read_text(encoding="utf-8")
+                    had_trailing_newline = raw_text.endswith("\n") if raw_text else True
+                    original_lines = raw_text.splitlines()
 
-                # Process hunks for this file
-                hunks = []
+                # Collect hunks via @@ counts until next paired header or EOF
+                hunks: list[tuple[str, list[str]]] = []
                 while i < len(lines) and not (
-                    lines[i].startswith("--- a/") or lines[i].startswith("--- ")
+                    lines[i].startswith("--- ")
+                    and i + 1 < len(lines)
+                    and lines[i + 1].startswith("+++ ")
                 ):
                     if lines[i].startswith("@@"):
                         hunk_header = lines[i]
+                        m = re.match(
+                            r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", hunk_header
+                        )
+                        if not m:
+                            raise ValueError(f"Malformed hunk header: {hunk_header!r}")
+                        old_count = int(m.group(2)) if m.group(2) is not None else 1
+                        new_count = int(m.group(4)) if m.group(4) is not None else 1
                         i += 1
-                        hunk_lines = []
-                        while (
-                            i < len(lines)
-                            and not lines[i].startswith("@@")
-                            and not lines[i].startswith("--- ")
-                        ):
-                            hunk_lines.append(lines[i])
+                        old_seen = 0
+                        new_seen = 0
+                        hunk_lines: list[str] = []
+                        while old_seen < old_count or new_seen < new_count:
+                            if i >= len(lines):
+                                raise ValueError(
+                                    f"Truncated hunk in '{target_rel}': expected {old_count}/{new_count}, got {old_seen}/{new_seen}"
+                                )
+                            hl = lines[i]
+                            if hl.startswith("\\ No newline at end of file"):
+                                i += 1
+                                continue
+                            if hl.startswith("-"):
+                                old_seen += 1
+                                hunk_lines.append(hl)
+                            elif hl.startswith("+"):
+                                new_seen += 1
+                                hunk_lines.append(hl)
+                            elif hl.startswith(" ") or hl == "":
+                                old_seen += 1
+                                new_seen += 1
+                                hunk_lines.append(hl if hl else " ")
+                            else:
+                                raise ValueError(
+                                    f"Unexpected line inside hunk for '{target_rel}': {hl!r}"
+                                )
                             i += 1
                         hunks.append((hunk_header, hunk_lines))
                     else:
                         i += 1
 
-                # Apply hunks to original_lines
+                if not hunks:
+                    raise ValueError(f"File diff for '{target_rel}' contains no valid @@ hunks")
+
                 new_content = self._apply_hunks(original_lines, hunks)
-                target_file.write_text(
-                    "\n".join(new_content) + ("\n" if new_content else ""), encoding="utf-8"
-                )
+                if is_delete:
+                    if target_file.exists() and not new_content:
+                        target_file.unlink()
+                else:
+                    target_file.parent.mkdir(parents=True, exist_ok=True)
+                    rendered = "\n".join(new_content)
+                    if new_content and had_trailing_newline:
+                        rendered += "\n"
+                    target_file.write_text(rendered, encoding="utf-8")
             else:
                 i += 1
 
     def _apply_hunks(
         self, original_lines: list[str], hunks: list[tuple[str, list[str]]]
     ) -> list[str]:
-        """Apply unified diff hunks sequentially."""
+        """Apply unified diff hunks sequentially with strict context verification."""
         res_lines = list(original_lines)
         offset = 0
 
         for header, hunk_lines in hunks:
-            # Parse header @@ -old_start,old_len +new_start,new_len @@
-            match = re.search(r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", header)
+            match = re.match(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", header)
             if not match:
-                continue
+                raise ValueError(f"Malformed hunk header: {header!r}")
 
-            old_start = int(match.group(1)) - 1  # 0-indexed
+            old_start_1 = int(match.group(1))
             old_count = int(match.group(2)) if match.group(2) is not None else 1
 
-            # Extract old block and new block
-            removals = 0
-            additions = []
+            expected_old: list[str] = []
+            new_block: list[str] = []
             for hline in hunk_lines:
                 if hline.startswith("-"):
-                    removals += 1
+                    expected_old.append(hline[1:])
                 elif hline.startswith("+"):
-                    additions.append(hline[1:])
+                    new_block.append(hline[1:])
                 elif hline.startswith(" ") or not hline:
-                    additions.append(hline.removeprefix(" "))
+                    ctx_line = hline[1:] if hline.startswith(" ") else ""
+                    expected_old.append(ctx_line)
+                    new_block.append(ctx_line)
 
-            # Replace block
-            actual_start = max(0, old_start + offset)
-            actual_end = min(len(res_lines), actual_start + old_count)
-            res_lines[actual_start:actual_end] = additions
-            offset += len(additions) - old_count
+            # In unified diffs, @@ -0,0 +1,K @@ inserts at 0; @@ -N,0 +N+1,K @@ inserts after N (0-based N)
+            start_idx = (old_start_1 + offset) if old_count == 0 else (old_start_1 - 1 + offset)
+            end_idx = start_idx + len(expected_old)
+            if start_idx < 0 or end_idx > len(res_lines):
+                raise ValueError(
+                    f"Hunk line range [{start_idx + 1}..{end_idx}] out of bounds for file with {len(res_lines)} lines"
+                )
+
+            actual_slice = res_lines[start_idx:end_idx]
+            if actual_slice != expected_old:
+                raise ValueError(
+                    f"Patch context mismatch at line {old_start_1}: expected {expected_old!r}, found {actual_slice!r}"
+                )
+
+            res_lines[start_idx:end_idx] = new_block
+            offset += len(new_block) - len(expected_old)
 
         return res_lines

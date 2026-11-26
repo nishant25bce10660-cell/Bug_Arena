@@ -78,13 +78,13 @@ def extract_diff_and_explanation(response_text: str) -> tuple[str, str]:
     clean_text = response_text.strip()
     match = DIFF_BLOCK_REGEX.search(clean_text)
     if match:
-        diff = match.group(1).strip()
+        diff = match.group(1).strip("\r\n")
         explanation = clean_text[: match.start()].strip() + " " + clean_text[match.end() :].strip()
         return diff, explanation.strip()
 
     raw_match = RAW_DIFF_REGEX.search(clean_text)
     if raw_match:
-        diff = raw_match.group(1).strip()
+        diff = raw_match.group(1).strip("\r\n")
         explanation = clean_text[: raw_match.start()].strip()
         return diff, explanation.strip()
 

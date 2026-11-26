@@ -29,7 +29,7 @@ def parse_and_validate_patch(
     if not raw_diff or not raw_diff.strip():
         raise PatchValidationError("Invalid diff header: diff content is empty")
 
-    clean_diff = raw_diff.strip()
+    clean_diff = raw_diff.replace("\r\n", "\n").strip("\r\n")
     match = DIFF_HEADER_PATTERN.search(clean_diff)
     if not match:
         raise PatchValidationError("Invalid diff header: Missing '--- a/' or '+++ b/' markers")
