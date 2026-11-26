@@ -30,5 +30,7 @@ PERSONA_PROMPTS = {
 
 
 def get_persona_prompt(persona: PersonaType) -> str:
-    """Return the system prompt directive for a given persona."""
-    return PERSONA_PROMPTS.get(persona, PERSONA_PROMPTS[PersonaType.SURGICAL_MINIMALIST])
+    """Return the system prompt directive for a given persona; raises KeyError if unknown."""
+    if persona not in PERSONA_PROMPTS:
+        raise KeyError(f"Unknown persona: {persona!r}")
+    return PERSONA_PROMPTS[persona]
