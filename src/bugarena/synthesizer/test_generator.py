@@ -159,24 +159,25 @@ Bug description: {safe_desc}
 Target function: {clean_func} in {suspect.file_path}
 """
 
+import importlib
 import sys
 from pathlib import Path
 
 import pytest
 
-# Ensure workspace root is in sys.path
-root_dir = Path(__file__).resolve().parent.parent
-if str(root_dir) not in sys.path:
-    sys.path.insert(0, str(root_dir))
+# Locate repository root cleanly and ensure both root and src/ are in sys.path
+_here = Path(__file__).resolve()
+root_dir = _here.parent.parent
+for _cand in _here.parents:
+    if any((_cand / _m).exists() for _m in ("pyproject.toml", "src", ".git")):
+        root_dir = _cand
+        break
+for _p in (root_dir / "src", root_dir):
+    if _p.exists() and str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
 
-try:
-    from {import_path} import *
-except ImportError:
-    pass
-try:
-    from {import_path} import {clean_func}
-except ImportError:
-    pass
+_target_mod = importlib.import_module({import_path!r})
+globals().update({{_k: _v for _k, _v in vars(_target_mod).items() if not _k.startswith("__")}})
 
 
 def {test_name}():
