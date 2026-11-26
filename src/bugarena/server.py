@@ -83,7 +83,7 @@ def bug_detect(
     if repo_path.startswith("-"):
         raise ValueError(f"Invalid repo_path: '{repo_path}' cannot start with '-'")
 
-    bounded_error_log = error_log[:65536] if len(error_log) > 65536 else error_log
+    bounded_error_log = error_log[-65536:] if len(error_log) > 65536 else error_log
     bounded_max = min(max(1, max_candidates), 10)
 
     engine = BugDiscoveryEngine(repo_path)
@@ -401,6 +401,11 @@ def generate_fix_report(
         git_patch_diff=champion_patch or "",
         report_file_path=str(saved_path) if saved_path else None,
     )
+    if saved_path is not None:
+        _store_tournament(
+            tournament.tournament_id,
+            tournament.model_copy(update={"report_file_path": str(saved_path)}),
+        )
 
     if format == "json":
         return {
@@ -491,9 +496,16 @@ def bugarena_autonomous_repair(
     Composite end-to-end autonomous repair workflow:
     Detection -> Reproduction -> Tournament -> Sandbox Verification -> Report.
     """
-    bounded_error = error_log[:65536] if len(error_log) > 65536 else error_log
+    bounded_error = error_log[-65536:] if len(error_log) > 65536 else error_log
     bounded_desc = bug_description[:65536] if len(bug_description) > 65536 else bug_description
-    bounded_candidates = candidate_patches_raw[:20] if len(candidate_patches_raw) > 20 else candidate_patches_raw
+    candidate_warning = ""
+    if len(candidate_patches_raw) > 20:
+        candidate_warning = (
+            f"Truncated candidate_patches_raw from {len(candidate_patches_raw)} to 20."
+        )
+        bounded_candidates = candidate_patches_raw[:20]
+    else:
+        bounded_candidates = candidate_patches_raw
 
     # 1. Detection
     detect_res = bug_detect(repo_path, bounded_error, hint=hint)
@@ -582,7 +594,7 @@ def bugarena_autonomous_repair(
     # 5. Report
     report_res = generate_fix_report(t_id, format="markdown", output_file=output_report_file)
 
-    return {
+    out_dict: dict[str, Any] = {
         "tournament_id": t_id,
         "champion_candidate_id": eval_res["champion_candidate_id"],
         "leaderboard": eval_res["leaderboard"],
@@ -592,6 +604,9 @@ def bugarena_autonomous_repair(
         "git_patch_diff": report_res["git_patch_diff"],
         "report_file_path": report_res["report_file_path"],
     }
+    if candidate_warning:
+        out_dict["warning"] = candidate_warning
+    return out_dict
 
 
 def _scrub_payload(obj: Any, base_dir: Path | str | None = None) -> Any:
