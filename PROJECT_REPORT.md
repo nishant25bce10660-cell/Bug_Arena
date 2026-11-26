@@ -1,15 +1,15 @@
 # BugArena MCP — Project & Audit Report
 
-- **Generated (UTC):** `2026-11-26T11:25:24+00:00`
+- **Generated (UTC):** `2026-11-26T11:29:29+00:00`
 - **Repository:** `MCP server`
-- **Branch / HEAD:** `upgrade/bugarena-agents` @ `3f51417`
-- **Tracked Files:** `142` across `18` audited areas
+- **Branch / HEAD:** `upgrade/bugarena-agents` @ `977b8f2`
+- **Tracked Files:** `148` across `19` audited areas
 - **Auto-Update Trigger:** `.githooks/pre-commit` + `scripts/update_project_report.py` + `AGENTS.md`
 
 ## Audit Verdict
-- **Overall Status:** **ATTENTION REQUIRED — See Open Findings or Failing Checks**
+- **Overall Status:** **PASS — Clean Audit & Verification**
 - **Audit Engine Summary:** `ROUND 1 | new: 0 | confirmed: 0 | dismissed: 0 | fixed: 0 | open: 0`
-- **Module Coverage:** `94.4%` (`100.0%` statically read)
+- **Module Coverage:** `100.0%` (`100.0%` statically read)
 - **Open Confirmed Bugs:** `0` | **Dismissed:** `0` | **Unverified:** `0`
 - **Historical Ledger & Fix History:** `75` reconciled fixes (`40` `fix(...)` commits in git history; `2` prior dismissed)
 
@@ -17,8 +17,8 @@
 | Check | Result | Details |
 | :--- | :--- | :--- |
 | `ruff check src tests scripts` | **PASS (0 issues)** | `All checks passed!` |
-| `pytest -q -m "not slow and not browser"` | **PASS (117 passed, 2 deselected in 17.45s)** | `Isolated unit + regression suites` |
-| `LoopOperator` Read-Only Audit | **PASS** | `18 areas, 0 open confirmed` |
+| `pytest -q -m "not slow and not browser"` | **PASS (122 passed, 3 deselected in 17.50s)** | `Isolated unit + regression suites` |
+| `LoopOperator` Read-Only Audit | **PASS** | `19 areas, 0 open confirmed` |
 
 ## MCP Tools
 Total registered tools: **13**
@@ -44,7 +44,7 @@ Total registered tools: **13**
 | :--- | :---: | :---: | :---: | :--- |
 | `agents` | 18 | YES | YES | - |
 | `audit` | 12 | YES | YES | - |
-| `bugarena` | 5 | YES | NO | - |
+| `browser` | 5 | YES | YES | - |
 | `config` | 1 | YES | YES | - |
 | `discovery` | 4 | YES | YES | - |
 | `docs` | 17 | YES | YES | - |
@@ -58,13 +58,15 @@ Total registered tools: **13**
 | `scripts` | 3 | YES | YES | - |
 | `server` | 1 | YES | YES | - |
 | `synthesizer` | 3 | YES | YES | - |
-| `tests` | 51 | YES | YES | - |
+| `tests` | 52 | YES | YES | - |
 | `tournament` | 3 | YES | YES | - |
+| `truth` | 5 | YES | YES | - |
 
 ## Active Audit Findings
 No open audit findings detected in the current codebase.
 
 ## Recent Changes
+- `977b8f2 feat(truth): add EvidenceVault hash chain, ClaimLedger, CitationChecker, Scoreboard, and TranscriptLogger`
 - `3f51417 docs(phase1): add v2 PLAN, ARCHITECTURE, THREAT_MODEL, REQUIREMENTS_TRACE, and DEVIATIONS`
 - `7e95e91 fix(phase0): reconcile state, enforce real coverage, add tool descriptions & pytest markers`
 - `ab6765d docs: reconcile README, CONTRIBUTING, docs/, and historical report gitignore`
@@ -76,16 +78,16 @@ No open audit findings detected in the current codebase.
 - `9c1dfde fix(ECC-039): replace tautological security assertion and test all 5 providers with MockTransport`
 - `00dec51 fix(ECC-043): ignore .env.*, reports, caches, .bugarena and comment .env.example blanks`
 - `9569200 fix(ECC-036): add check_api_keys --dry-run, JSON guard, and portable path hint`
-- `30eafc2 fix(ECC-007): add personas __init__ and complete reporting exports`
 
 ## Working Tree Snapshot (`git status --short`)
 ```text
-A  src/bugarena/truth/__init__.py
-A  src/bugarena/truth/claims.py
-A  src/bugarena/truth/scoreboard.py
-A  src/bugarena/truth/transcript.py
-A  src/bugarena/truth/vault.py
-A  tests/unit/test_truth_foundation.py
+M  src/bugarena/audit/coverage.py
+A  src/bugarena/browser/__init__.py
+A  src/bugarena/browser/cdp.py
+A  src/bugarena/browser/cursor.py
+A  src/bugarena/browser/discovery.py
+A  src/bugarena/browser/questionnaire.py
+A  tests/unit/test_browser_layer.py
 ```
 
 ## How This Report Stays Updated

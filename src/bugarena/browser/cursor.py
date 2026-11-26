@@ -1,0 +1,364 @@
+"""Isolated per-browser cursors ([mcp_<browser>]) and Session Authorization Gate."""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import os
+import re
+import secrets
+import shutil
+import signal
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlparse
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from bugarena.browser.cdp import CDPClient
+
+
+class AuthorizationError(PermissionError):
+    """Raised when an action violates session authorization or passive-mode limits."""
+
+
+class CursorIsolationError(PermissionError):
+    """Raised when a cursor attempts unauthorized port or capability access."""
+
+
+_PASSIVE_ALLOWED_ACTIONS = frozenset({
+    "navigate",
+    "read_dom",
+    "read_console",
+    "read_network",
+    "read_storage",
+    "read_security",
+    "screenshot",
+    "print_pdf",
+    "robots_check",
+})
+
+_ACTIVE_ACTIONS = frozenset({
+    "form_submit",
+    "click_interaction",
+    "type_input",
+    "fuzz",
+    "auth_probe",
+})
+
+_CURSOR_COLORS = {
+    "chrome": "#1a73e8",
+    "brave": "#fb542b",
+    "helium": "#10b981",
+}
+
+
+class AccessPolicy(BaseModel):
+    """Immutable authorization and safety policy derived from questionnaire answers."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    site_url: str
+    allowed_origin: str
+    authorization: str = "neither"  # own | written_permission | neither
+    access_level: str = "passive"  # full_access | passive
+    max_rps: float = Field(default=2.0, gt=0.0)
+    respect_robots_txt: bool = True
+    allow_subdomains: bool = False
+    max_pages: int = Field(default=10, ge=1, le=200)
+
+    @classmethod
+    def from_answers(cls, answers: dict[str, Any]) -> AccessPolicy:
+        site_url = str(answers.get("site_url", "")).strip()
+        parsed = urlparse(site_url)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            raise ValueError(f"Valid http/https site_url required, got {site_url!r}")
+        auth = str(answers.get("authorization", "neither")).lower().strip()
+        if auth not in ("own", "written_permission", "neither"):
+            auth = "neither"
+        requested_access = str(answers.get("access_level", "passive")).lower().strip()
+        # Non-negotiable Section 4 gate: without own/permission, force passive mode
+        effective_access = (
+            "full_access"
+            if (auth in ("own", "written_permission") and requested_access == "full_access")
+            else "passive"
+        )
+        max_rps = float(answers.get("max_rps", 2.0))
+        if effective_access == "passive":
+            max_rps = min(max_rps, 2.0)
+        return cls(
+            site_url=site_url,
+            allowed_origin=f"{parsed.scheme}://{parsed.netloc}",
+            authorization=auth,
+            access_level=effective_access,
+            max_rps=max_rps,
+            respect_robots_txt=(effective_access == "passive") or bool(answers.get("respect_robots_txt", True)),
+            allow_subdomains=bool(answers.get("allow_subdomains", False)),
+            max_pages=min(max(1, int(answers.get("max_pages", 10))), 200),
+        )
+
+    def assert_action_allowed(self, action: str, target_url: str | None = None) -> None:
+        if target_url:
+            p = urlparse(target_url)
+            origin = f"{p.scheme}://{p.netloc}"
+            allowed = urlparse(self.allowed_origin)
+            if origin != self.allowed_origin and not (
+                self.allow_subdomains and p.netloc.endswith(f".{allowed.netloc}")
+            ):
+                raise AuthorizationError(f"Target {target_url!r} outside authorized origin {self.allowed_origin!r}")
+        if self.access_level == "passive" and action in _ACTIVE_ACTIONS:
+            raise AuthorizationError(
+                f"Action {action!r} blocked: session is in passive mode (requires own/written_permission)."
+            )
+        if action not in _PASSIVE_ALLOWED_ACTIONS and action not in _ACTIVE_ACTIONS:
+            raise AuthorizationError(f"Unknown browser action {action!r}")
+
+
+def _spawn_browser_proc(args: list[str], kwargs: dict[str, Any]) -> subprocess.Popen[str]:
+    return subprocess.Popen(args, **kwargs)
+
+
+def _kill_proc_tree(proc: subprocess.Popen[str]) -> None:
+    if proc.poll() is not None:
+        return
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+            capture_output=True,
+            check=False,
+        )
+    else:
+        with contextlib.suppress(OSError):
+            os.killpg(proc.pid, signal.SIGKILL)
+        with contextlib.suppress(OSError):
+            proc.kill()
+    with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+        proc.wait(timeout=3.0)
+
+
+def _remove_tree(path: Path) -> None:
+    if not path.exists():
+        return
+
+    def _on_err(func, p, _exc):
+        with contextlib.suppress(OSError):
+            os.chmod(p, stat.S_IWRITE | stat.S_IREAD)
+            func(p)
+
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=_on_err)
+    else:
+        shutil.rmtree(path, onerror=_on_err)
+
+
+@dataclass
+class BrowserCursor:
+    """Isolated worker owning one Chromium instance ([mcp_<browser>]) over loopback CDP."""
+
+    browser_name: str
+    port: int
+    profile_dir: Path
+    capability_token: str = field(default_factory=lambda: secrets.token_urlsafe(24))
+    pid: int | None = None
+    headless: bool = True
+    cdp: CDPClient | None = None
+    _proc: subprocess.Popen[str] | None = None
+    _cleanup_profile: bool = True
+    _last_nav_ts: float = 0.0
+
+    @property
+    def cursor_name(self) -> str:
+        return f"[mcp_{self.browser_name.lower()}]"
+
+    def verify_target(self, *, port: int, capability_token: str) -> None:
+        """Reject any connection or command unless port AND capability_token match this cursor."""
+        if port != self.port:
+            raise CursorIsolationError(
+                f"{self.cursor_name} blocked from accessing foreign port {port} (owns {self.port})."
+            )
+        if not secrets.compare_digest(capability_token, self.capability_token):
+            raise CursorIsolationError(f"{self.cursor_name} capability token mismatch.")
+
+    @staticmethod
+    def snapshot_browser_pids() -> set[int]:
+        """Return PIDs of running Chrome/Brave/Helium processes for before/after isolation checks."""
+        targets = {"chrome.exe", "brave.exe", "helium.exe", "chrome", "brave", "helium"}
+        pids: set[int] = set()
+        if os.name == "nt":
+            res = subprocess.run(
+                ["tasklist", "/FO", "CSV", "/NH"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+            for row in res.stdout.splitlines():
+                parts = [c.strip().strip('"') for c in row.split(",")]
+                if len(parts) >= 2 and parts[0].lower() in targets and parts[1].isdigit():
+                    pids.add(int(parts[1]))
+        else:
+            res = subprocess.run(["ps", "-eo", "pid,comm"], capture_output=True, text=True, check=False)
+            for row in res.stdout.splitlines()[1:]:
+                cols = row.strip().split(None, 1)
+                if len(cols) == 2 and cols[0].isdigit() and any(t in cols[1].lower() for t in targets):
+                    pids.add(int(cols[0]))
+        return pids
+
+    @classmethod
+    async def launch(
+        cls,
+        *,
+        browser_name: str,
+        executable: str,
+        headless: bool = True,
+        dedicated_profile: Path | None = None,
+        timeout_seconds: float = 12.0,
+    ) -> BrowserCursor:
+        """Launch Chromium on 127.0.0.1 ephemeral port with isolated temp --user-data-dir."""
+        if not Path(executable).is_file():
+            raise FileNotFoundError(f"Browser executable not found: {executable}")
+
+        if dedicated_profile is not None:
+            profile_dir = Path(dedicated_profile).resolve()
+            profile_dir.mkdir(parents=True, exist_ok=True)
+            cleanup_profile = False
+        else:
+            profile_dir = Path(tempfile.mkdtemp(prefix=f"bugarena_{browser_name}_")).resolve()
+            cleanup_profile = True
+
+        args = [
+            executable,
+            f"--user-data-dir={profile_dir}",
+            "--remote-debugging-port=0",
+            "--remote-debugging-address=127.0.0.1",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-background-networking",
+            "--disable-sync",
+            "--disable-gpu",
+        ]
+        if headless:
+            args.append("--headless=new")
+        args.append("about:blank")
+
+        kwargs: dict[str, Any] = {
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
+            "text": True,
+            "encoding": "utf-8",
+            "errors": "replace",
+            "shell": False,
+        }
+        if os.name == "nt":
+            kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        else:
+            kwargs["start_new_session"] = True
+
+        proc = await asyncio.to_thread(_spawn_browser_proc, args, kwargs)
+        port: int | None = None
+        deadline = time.monotonic() + timeout_seconds
+
+        try:
+            active_port_file = profile_dir / "DevToolsActivePort"
+            while time.monotonic() < deadline:
+                if proc.poll() is not None:
+                    err = proc.stderr.read() if proc.stderr else ""
+                    raise RuntimeError(f"{browser_name} exited early ({proc.returncode}): {err[:400]}")
+                if active_port_file.is_file():
+                    first_line = active_port_file.read_text(encoding="utf-8", errors="ignore").splitlines()
+                    if first_line and first_line[0].strip().isdigit():
+                        port = int(first_line[0].strip())
+                        break
+                if proc.stderr is not None:
+                    # Non-blocking peek when DevToolsActivePort hasn't appeared yet
+                    await asyncio.sleep(0.15)
+                else:
+                    await asyncio.sleep(0.15)
+
+            if port is None and proc.stderr is not None:
+                # Try reading available stderr lines on failure
+                m = re.search(r"ws://127\.0\.0\.1:(\d+)/", "")
+                if m:
+                    port = int(m.group(1))
+            if port is None:
+                raise TimeoutError(f"Timed out waiting for DevToolsActivePort from {browser_name}.")
+
+            cdp = await CDPClient.from_port(port, prefer_page_target=True)
+            cursor = cls(
+                browser_name=browser_name,
+                port=port,
+                profile_dir=profile_dir,
+                pid=proc.pid,
+                headless=headless,
+                cdp=cdp,
+                _proc=proc,
+                _cleanup_profile=cleanup_profile,
+            )
+            await cdp.send("Page.enable")
+            await cdp.send("Runtime.enable")
+            if not headless:
+                await cursor.inject_visual_badge()
+            return cursor
+        except Exception:
+            _kill_proc_tree(proc)
+            if cleanup_profile:
+                _remove_tree(profile_dir)
+            raise
+
+    async def inject_visual_badge(self) -> None:
+        """Render non-intrusive [mcp_<browser>] cursor overlay in headed mode only."""
+        if self.cdp is None:
+            return
+        color = _CURSOR_COLORS.get(self.browser_name.lower(), "#7c3aed")
+        js = (
+            "(() => { let el = document.getElementById('__bugarena_cursor_badge');"
+            "if (!el) { el = document.createElement('div'); el.id = '__bugarena_cursor_badge';"
+            "el.style.cssText = 'position:fixed;bottom:10px;right:10px;z-index:2147483647;"
+            f"padding:4px 8px;border-radius:6px;background:{color};color:#fff;font:12px monospace;"
+            "pointer-events:none;box-shadow:0 2px 6px rgba(0,0,0,0.3)';"
+            f"el.textContent = {self.cursor_name!r}; document.documentElement.appendChild(el); }} }})();"
+        )
+        with contextlib.suppress(Exception):
+            await self.cdp.send("Runtime.evaluate", {"expression": js})
+
+    async def remove_visual_badge(self) -> None:
+        if self.cdp is None:
+            return
+        with contextlib.suppress(Exception):
+            await self.cdp.send(
+                "Runtime.evaluate",
+                {"expression": "document.getElementById('__bugarena_cursor_badge')?.remove();"},
+            )
+
+    async def navigate(self, url: str, *, policy: AccessPolicy) -> dict[str, Any]:
+        policy.assert_action_allowed("navigate", target_url=url)
+        min_gap = 1.0 / max(policy.max_rps, 0.1)
+        elapsed = time.monotonic() - self._last_nav_ts
+        if elapsed < min_gap:
+            await asyncio.sleep(min_gap - elapsed)
+        self._last_nav_ts = time.monotonic()
+        assert self.cdp is not None
+        res = await self.cdp.send("Page.navigate", {"url": url})
+        await asyncio.sleep(0.4)
+        if not self.headless:
+            await self.inject_visual_badge()
+        return res
+
+    async def close(self) -> None:
+        if not self.headless:
+            await self.remove_visual_badge()
+        if self.cdp is not None:
+            await self.cdp.close()
+            self.cdp = None
+        if self._proc is not None:
+            _kill_proc_tree(self._proc)
+            self._proc = None
+        if self._cleanup_profile:
+            _remove_tree(self.profile_dir)

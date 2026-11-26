@@ -92,6 +92,8 @@ def classify_area(rel_path: str) -> str:
             return area
     if norm.startswith("src/"):
         parts = norm.split("/")
+        if len(parts) > 3 and parts[1] == "bugarena":
+            return parts[2]
         return parts[1] if len(parts) > 2 else "src_root"
     return "other"
 
