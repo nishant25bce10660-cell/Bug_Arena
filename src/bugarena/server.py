@@ -89,7 +89,7 @@ def bug_detect(
     return {
         "bug_id": bug_spec.bug_id,
         "repo_path": bug_spec.repo_path,
-        "suspects": [s.model_dump() for s in bug_spec.suspects],
+        "suspects": _scrub_payload([s.model_dump() for s in bug_spec.suspects], base_dir=repo_path),
         "trace_count": len(bug_spec.traces),
     }
 
@@ -391,6 +391,7 @@ def generate_bug_report(
         bug_description=bug_description,
     )
 
+    report_md = scrub_sensitive_data(report_md, base_dir=repo_path)
     out_path = output_file or str(Path(repo_path) / "reports" / f"bug_report_{bug_spec.bug_id}.md")
     safe_out = validate_safe_path(repo_path, out_path)
     saved_path = save_markdown_report(report_md, safe_out, base_dir=repo_path)
@@ -399,7 +400,7 @@ def generate_bug_report(
         "bug_id": bug_spec.bug_id,
         "report_markdown": report_md,
         "report_file_path": str(saved_path),
-        "suspects": [s.model_dump() for s in bug_spec.suspects],
+        "suspects": _scrub_payload([s.model_dump() for s in bug_spec.suspects], base_dir=repo_path),
     }
 
 

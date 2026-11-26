@@ -5,7 +5,35 @@ from pathlib import Path
 
 from bugarena.discovery.ast_analyzer import locate_faulty_ast_slice
 from bugarena.discovery.log_parser import parse_python_traceback
-from bugarena.models.bug import BugSpec, SuspectLocation
+from bugarena.models.bug import BugSpec, FaultTrace, SuspectLocation
+from bugarena.sandbox.security import scrub_sensitive_data
+
+ALLOWED_SOURCE_EXTENSIONS = frozenset({".py", ".pyi"})
+EXCLUDED_DIR_PARTS = frozenset({
+    ".git",
+    ".venv",
+    "venv",
+    ".ssh",
+    ".aws",
+    "__pycache__",
+    "node_modules",
+    ".pytest_cache",
+    ".ruff_cache",
+})
+
+
+def _is_safe_source_path(rel_or_abs: Path, resolved: Path, repo_root: Path) -> bool:
+    """Return True only when resolved is a regular source file inside repo_root, excluding .env/secrets."""
+    if not resolved.is_file() or not resolved.is_relative_to(repo_root):
+        return False
+    if resolved.suffix.lower() not in ALLOWED_SOURCE_EXTENSIONS:
+        return False
+    rel_parts = resolved.relative_to(repo_root).parts
+    orig_parts = rel_or_abs.parts
+    for part in (*rel_parts, *orig_parts):
+        if part.startswith(".env") or part in EXCLUDED_DIR_PARTS:
+            return False
+    return True
 
 
 class BugDiscoveryEngine:
@@ -39,17 +67,15 @@ class BugDiscoveryEngine:
                 else:
                     candidate_path = candidate.resolve()
 
-                if candidate_path.is_file() and candidate_path.is_relative_to(self.repo_path):
+                if _is_safe_source_path(candidate, candidate_path, self.repo_path):
                     resolved_file = candidate_path
                 else:
-                    # Search by file name within repo only
-                    matches = list(self.repo_path.rglob(Path(trace.file_path).name))
-                    if (
-                        matches
-                        and matches[0].is_file()
-                        and matches[0].resolve().is_relative_to(self.repo_path)
-                    ):
-                        resolved_file = matches[0].resolve()
+                    # Search by file name within repo only, excluding non-source/.env/.venv
+                    for match in self.repo_path.rglob(Path(trace.file_path).name):
+                        m_res = match.resolve()
+                        if _is_safe_source_path(match, m_res, self.repo_path):
+                            resolved_file = m_res
+                            break
             except (OSError, ValueError):
                 continue
 
@@ -70,17 +96,20 @@ class BugDiscoveryEngine:
             confidence = max(0.5, 0.95 - (idx * 0.15))
             bug_type = trace.error_message.split(":", 1)[0].strip() or "RuntimeError"
 
-            reasoning = (
-                f"Stack frame {len(traces) - idx} crashed at line {trace.line_number} "
-                f"in function '{trace.function_name}'. {trace.error_message}"
+            reasoning = scrub_sensitive_data(
+                (
+                    f"Stack frame {len(traces) - idx} crashed at line {trace.line_number} "
+                    f"in function '{trace.function_name}'. {trace.error_message}"
+                    + (f" (Hint correlation: {hint})" if hint else "")
+                ),
+                base_dir=self.repo_path,
             )
-            if hint:
-                reasoning += f" (Hint correlation: {hint})"
 
             line_range = (
                 ast_slice["line_range"] if ast_slice else (trace.line_number, trace.line_number)
             )
-            snippet = ast_slice["code_snippet"] if ast_slice else trace.code
+            raw_snippet = ast_slice["code_snippet"] if ast_slice else trace.code
+            snippet = scrub_sensitive_data(raw_snippet, base_dir=self.repo_path)
 
             suspect = SuspectLocation(
                 file_path=rel_path,
@@ -96,12 +125,22 @@ class BugDiscoveryEngine:
             if len(suspects) >= max_candidates:
                 break
 
+        scrubbed_traces = [
+            FaultTrace(
+                file_path=t.file_path,
+                line_number=t.line_number,
+                function_name=t.function_name,
+                code=scrub_sensitive_data(t.code, base_dir=self.repo_path),
+                error_message=scrub_sensitive_data(t.error_message, base_dir=self.repo_path),
+            )
+            for t in traces
+        ]
         bug_id = f"bug_{uuid.uuid4().hex[:8]}"
         return BugSpec(
             bug_id=bug_id,
             repo_path=str(self.repo_path),
-            error_log=error_log,
+            error_log=scrub_sensitive_data(error_log, base_dir=self.repo_path),
             hint=hint,
             suspects=suspects,
-            traces=traces,
+            traces=scrubbed_traces,
         )
