@@ -277,19 +277,58 @@ def generate_fix_report(
             None,
         )
 
-    # Save to disk as an .md file
-    out_path = output_file
-    if not out_path:
-        out_path = str(Path(tournament.repo_path) / "reports" / f"bug_report_{tournament.tournament_id}.md")
+    # Format validation & path-confined report persistence
+    if format not in ("markdown", "json", "diff"):
+        raise ValueError(f"Unsupported format {format!r}; expected 'markdown', 'json', or 'diff'.")
 
-    saved_path = save_markdown_report(report_md, out_path)
+    saved_path: Path | None = None
+    if format == "json":
+        import json as _json
+
+        default_json = str(
+            Path(tournament.repo_path) / "reports" / f"bug_report_{tournament.tournament_id}.json"
+        )
+        out_path = output_file or default_json
+        safe_out = validate_safe_path(tournament.repo_path, out_path)
+        json_payload = {
+            "tournament_id": tournament.tournament_id,
+            "champion_candidate_id": tournament.champion_candidate_id,
+            "evaluations": [e.model_dump() for e in tournament.evaluations],
+            "champion_diff": champion_patch,
+        }
+        saved_path = save_markdown_report(
+            _json.dumps(json_payload, indent=2), safe_out, base_dir=tournament.repo_path
+        )
+    elif format == "markdown":
+        out_path = output_file or str(
+            Path(tournament.repo_path) / "reports" / f"bug_report_{tournament.tournament_id}.md"
+        )
+        safe_out = validate_safe_path(tournament.repo_path, out_path)
+        saved_path = save_markdown_report(report_md, safe_out, base_dir=tournament.repo_path)
+    elif output_file:
+        safe_out = validate_safe_path(tournament.repo_path, output_file)
+        saved_path = save_markdown_report(
+            champion_patch or "", safe_out, base_dir=tournament.repo_path
+        )
+
+    champion_cand = (
+        next((c for c in tournament.candidates if c.candidate_id == tournament.champion_candidate_id), None)
+        if tournament.champion_candidate_id
+        else None
+    )
+    champion_eval = (
+        next((e for e in tournament.evaluations if e.candidate_id == tournament.champion_candidate_id), None)
+        if tournament.champion_candidate_id
+        else None
+    )
 
     fix_report = FixReport(
         tournament_id=tournament.tournament_id,
-        champion_candidate_id=tournament.champion_candidate_id,
+        champion_patch=champion_cand,
+        champion_eval=champion_eval,
         summary_markdown=report_md,
         git_patch_diff=champion_patch or "",
-        report_file_path=str(saved_path),
+        report_file_path=str(saved_path) if saved_path else None,
     )
 
     if format == "json":
@@ -298,14 +337,14 @@ def generate_fix_report(
             "champion_candidate_id": tournament.champion_candidate_id,
             "evaluations": [e.model_dump() for e in tournament.evaluations],
             "champion_diff": champion_patch,
-            "report_file_path": str(saved_path),
+            "report_file_path": str(saved_path) if saved_path else "",
             "report": fix_report.model_dump(),
         }
     elif format == "diff":
         return {
             "diff": champion_patch or "",
             "git_patch_diff": champion_patch or "",
-            "report_file_path": str(saved_path),
+            "report_file_path": str(saved_path) if saved_path else "",
         }
     else:
         return {
@@ -313,7 +352,7 @@ def generate_fix_report(
             "summary_markdown": report_md,
             "champion_diff": champion_patch or "",
             "git_patch_diff": champion_patch or "",
-            "report_file_path": str(saved_path),
+            "report_file_path": str(saved_path) if saved_path else "",
             "report": fix_report.model_dump(),
         }
 
@@ -353,7 +392,8 @@ def generate_bug_report(
     )
 
     out_path = output_file or str(Path(repo_path) / "reports" / f"bug_report_{bug_spec.bug_id}.md")
-    saved_path = save_markdown_report(report_md, out_path)
+    safe_out = validate_safe_path(repo_path, out_path)
+    saved_path = save_markdown_report(report_md, safe_out, base_dir=repo_path)
 
     return {
         "bug_id": bug_spec.bug_id,

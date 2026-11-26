@@ -5,13 +5,21 @@ from pathlib import Path
 from bugarena.models.bug import BugSpec
 from bugarena.models.repro import ReproTestSpec
 from bugarena.models.tournament import TournamentRecord
+from bugarena.sandbox.security import validate_safe_path
 
 
-def save_markdown_report(report_markdown: str, output_path: str | Path) -> Path:
+def save_markdown_report(
+    report_markdown: str,
+    output_path: str | Path,
+    base_dir: Path | str | None = None,
+) -> Path:
     """
-    Save generated markdown report to disk, creating parent directories if needed.
+    Save generated report text to disk, enforcing base_dir containment when supplied.
     """
-    target = Path(output_path).resolve()
+    if base_dir is not None:
+        target = validate_safe_path(base_dir, str(output_path))
+    else:
+        target = Path(output_path).resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(report_markdown, encoding="utf-8")
     return target
