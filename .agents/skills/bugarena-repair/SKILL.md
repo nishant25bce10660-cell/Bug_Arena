@@ -38,6 +38,19 @@ Ensure the `bugarena` MCP server is active in `mcp_config.json`. The server expo
 - `finding_verify`: Independently verifies or dismisses a candidate finding in the ledger.
 - `audit_report`: Writes an evidence-graded audit report under `.bugarena/`.
 - `fix_loop_start`: Orchestrates test-first remediation over confirmed audit findings.
+- `session_prepare`: Detects installed browsers and keys and returns the pre-start questionnaire.
+- `session_confirm`: Enforces authorization gate, writes `scope_and_authorization.md`, and issues session token.
+- `site_audit_start`: Runs multi-browser CDP site audit for an authorized session.
+- `site_audit_round`: Runs an additional multi-browser site audit and verification round.
+- `site_audit_status`: Returns claim statuses and vault integrity.
+- `browser_cursor_list`: Lists isolated `[mcp_<browser>]` cursors.
+- `inspect_panel`: Inspects one DevTools panel on a granted browser.
+- `project_audit_start`: Runs project audit and links site findings through source maps.
+- `report_build`: Generates `REPORT.md`, `REPORT.pdf`, `report.json`, and per-finding evidence folders.
+- `verify_pack_build`: Generates offline `verify.py` and `VERIFY_PROMPT.md`.
+- `claim_retract`: Logs a first-class claim retraction into `corrections_log.md`.
+- `agent_scoreboard`: Reads honesty, precision, and Brier calibration scores.
+- `merge_both_skills`: Quarantines, security-scans, and merges external skills while keeping BugArena primary.
 
 ---
 

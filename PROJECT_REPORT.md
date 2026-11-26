@@ -1,15 +1,15 @@
 # BugArena MCP — Project & Audit Report
 
-- **Generated (UTC):** `2026-11-26T11:40:36+00:00`
+- **Generated (UTC):** `2026-11-26T11:45:35+00:00`
 - **Repository:** `MCP server`
-- **Branch / HEAD:** `upgrade/bugarena-agents` @ `897c0be`
-- **Tracked Files:** `179` across `22` audited areas
+- **Branch / HEAD:** `upgrade/bugarena-agents` @ `4066f1c`
+- **Tracked Files:** `183` across `23` audited areas
 - **Auto-Update Trigger:** `.githooks/pre-commit` + `scripts/update_project_report.py` + `AGENTS.md`
 
 ## Audit Verdict
-- **Overall Status:** **PASS — Clean Audit & Verification**
+- **Overall Status:** **ATTENTION REQUIRED — See Open Findings or Failing Checks**
 - **Audit Engine Summary:** `ROUND 1 | new: 0 | confirmed: 0 | dismissed: 0 | fixed: 0 | open: 0`
-- **Module Coverage:** `100.0%` (`100.0%` statically read)
+- **Module Coverage:** `95.7%` (`100.0%` statically read)
 - **Open Confirmed Bugs:** `0` | **Dismissed:** `0` | **Unverified:** `0`
 - **Historical Ledger & Fix History:** `75` reconciled fixes (`40` `fix(...)` commits in git history; `2` prior dismissed)
 
@@ -17,11 +17,11 @@
 | Check | Result | Details |
 | :--- | :--- | :--- |
 | `ruff check src tests scripts` | **PASS (0 issues)** | `All checks passed!` |
-| `pytest -q -m "not slow and not browser"` | **PASS (129 passed, 5 deselected in 19.23s)** | `Isolated unit + regression suites` |
-| `LoopOperator` Read-Only Audit | **PASS** | `22 areas, 0 open confirmed` |
+| `pytest -q -m "not slow and not browser"` | **PASS (135 passed, 6 deselected in 20.92s)** | `Isolated unit + regression suites` |
+| `LoopOperator` Read-Only Audit | **PASS** | `23 areas, 0 open confirmed` |
 
 ## MCP Tools
-Total registered tools: **13**
+Total registered tools: **26**
 
 | Tool | Description |
 | :--- | :--- |
@@ -38,6 +38,19 @@ Total registered tools: **13**
 | `finding_verify` | Force independent second-agent dynamic re-verification of one ledger finding. |
 | `audit_report` | Generate an evidence-graded audit report; output_file is confined by validate_safe_path. |
 | `fix_loop_start` | Execute test-first fix evaluation over confirmed ledger findings (LLM generation gated by auto_generate). |
+| `session_prepare` | Detect installed Chrome/Brave/Helium browsers, check API key presence, and return the 13-question pre-start gate without launching any browser. |
+| `session_confirm` | Validate questionnaire answers, enforce passive mode when unauthorized, write scope_and_authorization.md, and issue a session token. |
+| `site_audit_start` | Start a multi-browser site audit run for a confirmed session_token and run the initial DevTools sweep. |
+| `site_audit_round` | Execute another multi-browser DevTools inspection, verification, and honesty-audit round for an active site_audit run_id. |
+| `site_audit_status` | Return confirmed/retracted/rejected claim counts, vault integrity, and details for a site_audit run_id. |
+| `browser_cursor_list` | List live or registered [mcp_<browser>] cursor workers, PIDs, ports, and states for a run_id. |
+| `inspect_panel` | Run targeted DevTools panel inspection (Elements, Console, Network, Application, Performance/Sensors) on one granted browser. |
+| `project_audit_start` | Run a read-only project audit and optionally link site stack frames to local source files via source maps. |
+| `report_build` | Build Section 1 & 12 REPORT.md, Chromium REPORT.pdf, report.json, per-finding folders, and unverified_leads.md from CONFIRMED claims only. |
+| `verify_pack_build` | Build standalone verification pack (verify/verify.py stdlib-only, VERIFY_PROMPT.md, claims.json, README.txt) for an audit run folder. |
+| `claim_retract` | Retract a claim from an audit run; entries are preserved permanently in agents/corrections_log.md and raise self-correction honesty score. |
+| `agent_scoreboard` | Return agent honesty, precision, Brier calibration, self-correction rate, and quarantine status for a run or cumulative scoreboard. |
+| `merge_both_skills` | Quarantine, security-scan, compatibility-test, and merge an external bug-detecting skill while keeping BugArena as immutable primary MCP. |
 
 ## Coverage Matrix
 | Area | Files | Static Read | Dynamic / Tested | Findings |
@@ -59,8 +72,9 @@ Total registered tools: **13**
 | `sandbox` | 4 | YES | YES | - |
 | `scripts` | 3 | YES | YES | - |
 | `server` | 1 | YES | YES | - |
+| `skills_merge` | 2 | YES | NO | - |
 | `synthesizer` | 3 | YES | YES | - |
-| `tests` | 60 | YES | YES | - |
+| `tests` | 62 | YES | YES | - |
 | `tournament` | 3 | YES | YES | - |
 | `truth` | 5 | YES | YES | - |
 | `verify` | 2 | YES | YES | - |
@@ -69,6 +83,7 @@ Total registered tools: **13**
 No open audit findings detected in the current codebase.
 
 ## Recent Changes
+- `4066f1c feat(reporting,verify): add v2 REPORT.md/Chromium PDF bundle, finding folders, and stdlib offline verify pack`
 - `897c0be feat(v2): add site analyst roster, SiteAuditCoordinator, VLQ sourcemap linker, and Grok/Gemini cross-vendor analysis`
 - `a4ef4b1 feat(inspect): add 14 DevTools CDP collectors, coverage_matrix.md, and planted-bug fixture site`
 - `c3a81bd feat(browser): add Chromium discovery, RFC 6455 CDP client, isolated [mcp_<browser>] cursors, and access gate`
@@ -80,15 +95,16 @@ No open audit findings detected in the current codebase.
 - `e3c026e fix(audit): preserve leading dotfiles in classify_area and guard post-fix detectors`
 - `d2ba121 fix(audit): fix log_parser detector match, patch_parser probe, and agents/audit circular import`
 - `4cf3bdb fix(ECC-020): escape markdown tables, use adaptive fences, show disqualification, frame prompts`
-- `dec8234 fix(ECC-040): sync README and SKILL docs with MCP tools, scoring, and portable config`
 
 ## Working Tree Snapshot (`git status --short`)
 ```text
-M  src/bugarena/reporting/__init__.py
-A  src/bugarena/reporting/v2_report.py
-A  src/bugarena/verify/__init__.py
-A  src/bugarena/verify/pack.py
-A  tests/unit/test_phase8_9_report_verify.py
+M  .agents/skills/bugarena-repair/SKILL.md
+M  README.md
+M  src/bugarena/server.py
+A  src/bugarena/skills_merge/__init__.py
+A  src/bugarena/skills_merge/pipeline.py
+A  tests/unit/test_phase10_merge_skills.py
+A  tests/unit/test_v2_server_tools.py
 ```
 
 ## How This Report Stays Updated

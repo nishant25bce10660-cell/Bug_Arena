@@ -154,6 +154,19 @@ These illustrate tool names and arguments; use your client's MCP interface to se
 | `finding_verify` | Reverify one finding independently |
 | `audit_report` | Render the audit ledger |
 | `fix_loop_start` | Evaluate candidate repairs for confirmed findings |
+| `session_prepare` | Detect browsers/API keys and return the pre-start questionnaire |
+| `session_confirm` | Validate answers, enforce passive/full access policy, and write `scope_and_authorization.md` |
+| `site_audit_start` | Launch authorized multi-browser CDP audit and collect DevTools telemetry |
+| `site_audit_round` | Execute another multi-browser verification and honesty-audit round |
+| `site_audit_status` | Return claim counts and `EvidenceVault` hash-chain integrity |
+| `browser_cursor_list` | List isolated `[mcp_<browser>]` cursors, PIDs, and ports |
+| `inspect_panel` | Inspect a targeted DevTools panel on a granted browser |
+| `project_audit_start` | Audit local source code and link site findings via source maps |
+| `report_build` | Build `REPORT.md`, Chromium `REPORT.pdf`, `report.json`, and finding folders |
+| `verify_pack_build` | Generate stdlib-only offline `verify/verify.py` and `VERIFY_PROMPT.md` |
+| `claim_retract` | Retract a claim into immutable `corrections_log.md` |
+| `agent_scoreboard` | Return per-agent honesty, precision, and Brier calibration scores |
+| `merge_both_skills` | Quarantine, scan, compatibility-test, and merge an external skill with BugArena primary |
 
 [Full signatures, defaults and descriptions →](docs/tools.md)
 

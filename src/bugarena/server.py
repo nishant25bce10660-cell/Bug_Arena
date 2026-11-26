@@ -15,6 +15,8 @@ from bugarena.audit.loop import LoopOperator
 from bugarena.config import load_env_file
 from bugarena.discovery.engine import BugDiscoveryEngine
 from bugarena.evaluation.test_runner import PatchEvaluator
+from bugarena.inspect.site_audit import SiteAuditCoordinator
+from bugarena.linking import link_site_and_project_findings
 from bugarena.models.agent import PersonaType
 from bugarena.models.bug import BugSpec, SuspectLocation
 from bugarena.models.report import FixReport
@@ -25,21 +27,27 @@ from bugarena.reporting.markdown_formatter import (
     format_markdown_report,
     save_markdown_report,
 )
+from bugarena.reporting.v2_report import build_v2_report_bundle
 from bugarena.sandbox.security import (
     SecurityViolationError,
     scrub_sensitive_data,
     validate_safe_path,
 )
+from bugarena.skills_merge import merge_both_skills as _merge_both_skills_impl
 from bugarena.synthesizer.red_validator import ReproductionFalsePositiveError, validate_red_baseline
 from bugarena.synthesizer.test_generator import generate_reproduction_test_code
 from bugarena.tournament.patch_parser import PatchValidationError, parse_and_validate_patch
+from bugarena.tournament.providers.cross_vendor import analyze_findings_cross_vendor
 from bugarena.tournament.runner import TournamentRunner
+from bugarena.truth import AgentScoreboard, ClaimLedger, EvidenceVault
+from bugarena.verify import build_verify_pack
 
 # Load .env file if present
 load_env_file()
 
 mcp = MCPServer("bugarena")
 _LOOP_OPERATOR = LoopOperator()
+_SITE_COORDINATOR = SiteAuditCoordinator()
 
 # Bounded, thread-safe in-memory registries for multi-step tool sessions (max 100 entries to prevent memory leaks)
 MAX_REGISTRY_SIZE = 100
@@ -683,13 +691,33 @@ def bugarena_autonomous_repair(
     return out_dict
 
 
+_PRESERVED_PATH_KEYS = frozenset({
+    "run_dir",
+    "scope_file",
+    "report_md",
+    "report_pdf",
+    "report_json",
+    "verify_dir",
+    "verify_script",
+    "verify_prompt",
+    "claims_file",
+    "report_path",
+    "manifest_path",
+    "package_dir",
+})
+
+
 def _scrub_payload(obj: Any, base_dir: Path | str | None = None) -> Any:
     if isinstance(obj, str):
         return scrub_sensitive_data(obj, base_dir=base_dir)
     if isinstance(obj, list):
         return [_scrub_payload(item, base_dir=base_dir) for item in obj]
     if isinstance(obj, dict):
-        return {k: _scrub_payload(v, base_dir=base_dir) for k, v in obj.items()}
+        return {
+            k: (v if k in _PRESERVED_PATH_KEYS else _scrub_payload(v, base_dir=base_dir))
+            for k, v in obj.items()
+        }
+    return obj
     return obj
 
 
@@ -779,6 +807,206 @@ async def fix_loop_start(
         run_id,
         finding_ids=finding_ids,
         auto_generate=auto_generate,
+    )
+    return _scrub_payload(res)
+
+
+@mcp.tool(description="Detect installed Chrome/Brave/Helium browsers, check API key presence, and return the 13-question pre-start gate without launching any browser.")
+async def session_prepare(user_hint: str | None = None) -> dict[str, Any]:
+    """Prepare site audit questionnaire and environment inventory (launches nothing)."""
+    res = await asyncio.to_thread(_SITE_COORDINATOR.sessions.session_prepare, user_hint)
+    return _scrub_payload(res)
+
+
+@mcp.tool(description="Validate questionnaire answers, enforce passive mode when unauthorized, write scope_and_authorization.md, and issue a session token.")
+async def session_confirm(answers: dict[str, Any]) -> dict[str, Any]:
+    """Validate pre-start answers and authorize a scoped audit session."""
+    registered = await mcp.list_tools()
+    tool_names = tuple(t.name for t in registered)
+    res = await asyncio.to_thread(
+        _SITE_COORDINATOR.sessions.session_confirm,
+        answers,
+        all_tool_names=tool_names,
+    )
+    return _scrub_payload(res)
+
+
+@mcp.tool(description="Start a multi-browser site audit run for a confirmed session_token and run the initial DevTools sweep.")
+async def site_audit_start(
+    url: str,
+    run_id: str,
+    session_token: str,
+    headless: bool = True,
+    panels: str | list[str] = "all",
+) -> dict[str, Any]:
+    """Begin multi-browser DevTools site audit strictly after session_confirm authorization."""
+    sess = _SITE_COORDINATOR.sessions.get_session(run_id)
+    if session_token != sess["session_token"]:
+        raise PermissionError("Invalid session_token; run session_confirm first.")
+    sess["policy"].assert_action_allowed("navigate", target_url=url)
+    res = await _SITE_COORDINATOR.start_and_run_round(run_id, headless=headless, panels=panels)
+    return _scrub_payload(res)
+
+
+@mcp.tool(description="Execute another multi-browser DevTools inspection, verification, and honesty-audit round for an active site_audit run_id.")
+async def site_audit_round(
+    run_id: str,
+    headless: bool = True,
+    panels: str | list[str] = "all",
+) -> dict[str, Any]:
+    """Execute one multi-browser site audit round on an existing confirmed session."""
+    res = await _SITE_COORDINATOR.start_and_run_round(run_id, headless=headless, panels=panels)
+    return _scrub_payload(res)
+
+
+@mcp.tool(description="Return confirmed/retracted/rejected claim counts, vault integrity, and details for a site_audit run_id.")
+async def site_audit_status(run_id: str) -> dict[str, Any]:
+    """Inspect status and EvidenceVault chain validity for a site audit run."""
+    res = await asyncio.to_thread(_SITE_COORDINATOR.status, run_id)
+    return _scrub_payload(res)
+
+
+@mcp.tool(description="List live or registered [mcp_<browser>] cursor workers, PIDs, ports, and states for a run_id.")
+async def browser_cursor_list(run_id: str) -> dict[str, Any]:
+    """List [mcp_<browser>] cursor instances belonging to run_id."""
+    res = await asyncio.to_thread(_SITE_COORDINATOR.sessions.browser_cursor_list, run_id)
+    return _scrub_payload(res)
+
+
+@mcp.tool(description="Run targeted DevTools panel inspection (Elements, Console, Network, Application, Performance/Sensors) on one granted browser.")
+async def inspect_panel(
+    run_id: str,
+    browser: str,
+    panel: str,
+    args: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Inspect one specific DevTools panel on a granted browser cursor."""
+    res = await _SITE_COORDINATOR.inspect_panel(run_id, browser, panel, args)
+    return _scrub_payload(res)
+
+
+@mcp.tool(description="Run a read-only project audit and optionally link site stack frames to local source files via source maps.")
+async def project_audit_start(
+    project_path: str,
+    site_run_id: str = "",
+    mode: str = "read_only",
+) -> dict[str, Any]:
+    """Audit a local project and optionally link findings to an existing site run via source maps."""
+    if project_path.startswith("-"):
+        raise ValueError("Invalid project_path")
+    started = await asyncio.to_thread(_LOOP_OPERATOR.start, project_path, mode=mode, max_rounds=2)
+    rnd = await _LOOP_OPERATOR.run_round(started["run_id"], auto_generate=False)
+    _rdir, _st, ledger, _cov = await asyncio.to_thread(_LOOP_OPERATOR.load_run, started["run_id"])
+    proj_findings = [
+        {"id": f.id, "file": f.location.file, "line": f.location.line_start, "title": f.title}
+        for f in ledger.findings
+    ]
+    linked: list[dict[str, Any]] = []
+    if site_run_id:
+        sess = _SITE_COORDINATOR.sessions.get_session(site_run_id)
+        rdir = Path(sess["run_dir"])
+        v = EvidenceVault(rdir)
+        sb = AgentScoreboard(rdir)
+        cl = ClaimLedger(rdir, vault=v, scoreboard=sb)
+        site_list = [c.model_dump() for c in cl.claims]
+        linked = link_site_and_project_findings(
+            site_findings=site_list,
+            project_findings=proj_findings,
+            source_maps={},
+            project_path=project_path,
+        )
+    return _scrub_payload(
+        {
+            "project_run_id": started["run_id"],
+            "round": rnd,
+            "project_findings_count": len(proj_findings),
+            "linked_findings": linked or proj_findings,
+        },
+        base_dir=project_path,
+    )
+
+
+@mcp.tool(description="Build Section 1 & 12 REPORT.md, Chromium REPORT.pdf, report.json, per-finding folders, and unverified_leads.md from CONFIRMED claims only.")
+async def report_build(
+    run_id: str,
+    formats: list[str] | None = None,
+    use_llm_analysis: bool = False,
+) -> dict[str, Any]:
+    """Render REPORT.md and REPORT.pdf strictly from verified CONFIRMED findings."""
+    sess = _SITE_COORDINATOR.sessions.get_session(run_id)
+    rdir = Path(sess["run_dir"])
+    vault = EvidenceVault(rdir)
+    sb = AgentScoreboard(rdir)
+    ledger = ClaimLedger(rdir, vault=vault, scoreboard=sb)
+    analysis = None
+    if use_llm_analysis:
+        analysis = await analyze_findings_cross_vendor(ledger=ledger, vault=vault)
+    res = await asyncio.to_thread(
+        build_v2_report_bundle,
+        rdir,
+        formats=tuple(formats or ["md", "pdf"]),
+        analysis_summary=analysis,
+        allow_fallback_pdf=True,
+    )
+    return _scrub_payload(res)
+
+
+@mcp.tool(description="Build standalone verification pack (verify/verify.py stdlib-only, VERIFY_PROMPT.md, claims.json, README.txt) for an audit run folder.")
+async def verify_pack_build(run_id: str) -> dict[str, Any]:
+    """Generate offline verify/ pack and VERIFY_PROMPT.md for independent coding-agent verification."""
+    sess = _SITE_COORDINATOR.sessions.get_session(run_id)
+    res = await asyncio.to_thread(build_verify_pack, Path(sess["run_dir"]))
+    return _scrub_payload(res)
+
+
+@mcp.tool(description="Retract a claim from an audit run; entries are preserved permanently in agents/corrections_log.md and raise self-correction honesty score.")
+async def claim_retract(
+    run_id: str,
+    claim_id: str,
+    reason: str,
+    agent_name: str = "self",
+) -> dict[str, Any]:
+    """Retract an inaccurate or uncertain claim without deleting history."""
+    sess = _SITE_COORDINATOR.sessions.get_session(run_id)
+    rdir = Path(sess["run_dir"])
+    vault = EvidenceVault(rdir)
+    sb = AgentScoreboard(rdir)
+    ledger = ClaimLedger(rdir, vault=vault, scoreboard=sb)
+    updated = await asyncio.to_thread(ledger.retract_claim, claim_id, reason=reason, by_agent=agent_name)
+    return _scrub_payload(updated.model_dump())
+
+
+@mcp.tool(description="Return agent honesty, precision, Brier calibration, self-correction rate, and quarantine status for a run or cumulative scoreboard.")
+async def agent_scoreboard(run_id: str | None = None) -> dict[str, Any]:
+    """Return agent reliability scoreboard for run_id or cumulative .bugarena/agent_scores.json."""
+    if run_id:
+        sess = _SITE_COORDINATOR.sessions.get_session(run_id)
+        sb = AgentScoreboard(Path(sess["run_dir"]))
+        return {"run_id": run_id, "agents": {k: v.model_dump() for k, v in sb.all_scores().items()}}
+    import json
+
+    gpath = Path(".bugarena/agent_scores.json")
+    if gpath.is_file():
+        return json.loads(gpath.read_text(encoding="utf-8"))
+    return {"agents": {}}
+
+
+@mcp.tool(description="Quarantine, security-scan, compatibility-test, and merge an external bug-detecting skill while keeping BugArena as immutable primary MCP.")
+async def merge_both_skills(
+    skill_source: str,
+    name: str | None = None,
+    dry_run: bool = True,
+    approved: bool = False,
+    output_root: str = "merged",
+) -> dict[str, Any]:
+    """Safely inspect (dry_run=True default) or merge a third-party skill into merged/<name>/."""
+    res = await asyncio.to_thread(
+        _merge_both_skills_impl,
+        skill_source,
+        name=name,
+        dry_run=dry_run,
+        approved=approved,
+        output_root=output_root,
     )
     return _scrub_payload(res)
 
