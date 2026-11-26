@@ -43,3 +43,7 @@ htmlcov/
 reports/
 workspace_temp/
 tests/repro_temp/
+
+# Historical local audit bundles (not published)
+/bug_report/
+/bug-report ECC/
