@@ -1,5 +1,6 @@
 """BugArena MCP Server exposing tools, resources, and repair tournament workflows."""
 
+import ast
 import asyncio
 import threading
 import uuid
@@ -24,7 +25,11 @@ from bugarena.reporting.markdown_formatter import (
     format_markdown_report,
     save_markdown_report,
 )
-from bugarena.sandbox.security import scrub_sensitive_data, validate_safe_path
+from bugarena.sandbox.security import (
+    SecurityViolationError,
+    scrub_sensitive_data,
+    validate_safe_path,
+)
 from bugarena.synthesizer.red_validator import ReproductionFalsePositiveError, validate_red_baseline
 from bugarena.synthesizer.test_generator import generate_reproduction_test_code
 from bugarena.tournament.patch_parser import PatchValidationError, parse_and_validate_patch
@@ -205,6 +210,60 @@ def agent_fix_tournament(
     }
 
 
+_UNSAFE_REPRO_CALLS = frozenset({
+    "__import__",
+    "eval",
+    "exec",
+    "compile",
+    "open",
+    "system",
+    "popen",
+    "write_text",
+    "write_bytes",
+    "unlink",
+    "rmdir",
+})
+_UNSAFE_REPRO_IMPORTS = frozenset({
+    "os",
+    "subprocess",
+    "shutil",
+    "socket",
+    "ctypes",
+    "importlib",
+    "http",
+    "urllib",
+    "requests",
+    "httpx",
+})
+
+
+def _validate_repro_code_ast(repro_code: str) -> None:
+    """Validate caller-supplied repro_code AST when no pre-verified tournament.repro_spec exists."""
+    try:
+        tree = ast.parse(repro_code)
+    except SyntaxError as exc:
+        raise ValueError(f"Invalid syntax in repro_code: {exc}") from exc
+
+    for node in tree.body:
+        if not isinstance(node, (ast.Import, ast.ImportFrom, ast.FunctionDef, ast.AsyncFunctionDef, ast.Assign, ast.AnnAssign, ast.Expr)):
+            raise SecurityViolationError(f"Unsupported top-level statement {type(node).__name__} in repro_code")
+        if isinstance(node, ast.Expr) and not (isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)):
+            raise SecurityViolationError("Top-level executable expressions are disallowed in repro_code")
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.split(".")[0] in _UNSAFE_REPRO_IMPORTS:
+                    raise SecurityViolationError(f"Unsafe module import {alias.name!r} in repro_code")
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            if node.module.split(".")[0] in _UNSAFE_REPRO_IMPORTS:
+                raise SecurityViolationError(f"Unsafe module import {node.module!r} in repro_code")
+        elif isinstance(node, ast.Name) and node.id in _UNSAFE_REPRO_CALLS:
+            raise SecurityViolationError(f"Unsafe identifier {node.id!r} in repro_code")
+        elif isinstance(node, ast.Attribute) and (node.attr.startswith("__") or node.attr in _UNSAFE_REPRO_CALLS):
+            raise SecurityViolationError(f"Unsafe attribute {node.attr!r} in repro_code")
+
+
 @mcp.tool()
 def evaluate_patches(
     repo_path: str,
@@ -215,15 +274,27 @@ def evaluate_patches(
     """
     Evaluate all tournament candidate patches inside isolated ephemeral sandboxes.
     """
-    tournament = _TOURNAMENT_REGISTRY.get(tournament_id)
+    with _REGISTRY_LOCK:
+        tournament = _TOURNAMENT_REGISTRY.get(tournament_id)
     if not tournament:
         return {"error": f"Tournament ID '{tournament_id}' not found."}
 
-    repro_spec = ReproTestSpec(
-        test_file_path=repro_test_file,
-        test_code=repro_code,
-        red_baseline_verified=True,
-    )
+    if tournament.repro_spec is not None:
+        if (
+            repro_test_file != tournament.repro_spec.test_file_path
+            or repro_code != tournament.repro_spec.test_code
+        ):
+            raise SecurityViolationError(
+                "repro_test_file or repro_code does not match the tournament's verified repro_spec."
+            )
+        repro_spec = tournament.repro_spec
+    else:
+        _validate_repro_code_ast(repro_code)
+        repro_spec = validate_red_baseline(
+            base_repo_path=repo_path,
+            test_rel_path=repro_test_file,
+            test_code=repro_code,
+        )
 
     evaluator = PatchEvaluator(base_repo_path=repo_path)
     evaluations, champion_id = evaluator.evaluate_candidates(

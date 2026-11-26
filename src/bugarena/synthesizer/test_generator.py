@@ -5,6 +5,110 @@ import re
 
 from bugarena.models.bug import SuspectLocation
 
+_FORBIDDEN_NAMES = frozenset({
+    "__import__",
+    "eval",
+    "exec",
+    "compile",
+    "open",
+    "globals",
+    "locals",
+    "vars",
+    "getattr",
+    "setattr",
+    "delattr",
+    "breakpoint",
+    "input",
+    "exit",
+    "quit",
+    "system",
+    "popen",
+})
+
+_FORBIDDEN_ATTRS = frozenset({
+    "system",
+    "popen",
+    "run",
+    "Popen",
+    "write_text",
+    "write_bytes",
+    "unlink",
+    "rmdir",
+    "mkdir",
+    "replace",
+    "rename",
+})
+
+_ALLOWED_EXPR_NODES = (
+    ast.Expression,
+    ast.Call,
+    ast.Attribute,
+    ast.Name,
+    ast.Load,
+    ast.Constant,
+    ast.Compare,
+    ast.BoolOp,
+    ast.BinOp,
+    ast.UnaryOp,
+    ast.Subscript,
+    ast.Slice,
+    ast.Tuple,
+    ast.List,
+    ast.Dict,
+    ast.Set,
+    ast.keyword,
+    ast.Eq,
+    ast.NotEq,
+    ast.Lt,
+    ast.LtE,
+    ast.Gt,
+    ast.GtE,
+    ast.Is,
+    ast.IsNot,
+    ast.In,
+    ast.NotIn,
+    ast.And,
+    ast.Or,
+    ast.Not,
+    ast.Add,
+    ast.Sub,
+    ast.Mult,
+    ast.Div,
+    ast.FloorDiv,
+    ast.Mod,
+    ast.Pow,
+    ast.UAdd,
+    ast.USub,
+    ast.Invert,
+)
+
+
+_ALLOWED_EXPR_NODE_TYPES = frozenset(_ALLOWED_EXPR_NODES)
+
+
+def _validate_safe_expression(expr: str, label: str = "expression") -> str:
+    """Validate an untrusted expression against a strict Python AST expression allowlist."""
+    stripped = expr.strip()
+    try:
+        tree = ast.parse(stripped, mode="eval")
+    except SyntaxError as exc:
+        raise ValueError(f"Unsafe or invalid {label}: {exc}") from exc
+
+    for node in ast.walk(tree):
+        if type(node) not in _ALLOWED_EXPR_NODE_TYPES:
+            raise ValueError(
+                f"Unsafe AST construct {type(node).__name__} disallowed in {label}"
+            )
+        if isinstance(node, ast.Name) and (
+            node.id.startswith("__") or node.id in _FORBIDDEN_NAMES
+        ):
+            raise ValueError(f"Unsafe identifier {node.id!r} disallowed in {label}")
+        if isinstance(node, ast.Attribute) and (
+            node.attr.startswith("__") or node.attr in _FORBIDDEN_ATTRS
+        ):
+            raise ValueError(f"Unsafe attribute {node.attr!r} disallowed in {label}")
+    return stripped
+
 
 def _sanitize_docstring(text: str) -> str:
     """Sanitize docstring content to prevent triple-quote breakout injection attacks."""
@@ -32,7 +136,11 @@ def generate_reproduction_test_code(
     import_path = clean_path.replace("/", ".")
 
     test_name = f"test_reproduction_{re.sub(r'[^a-zA-Z0-9_]', '_', clean_func)}"
-    target_call = call_expr or f"{clean_func}()"
+    if call_expr is not None and call_expr.strip():
+        target_call = _validate_safe_expression(call_expr, "call_expr")
+    else:
+        safe_fn = clean_func if clean_func.isidentifier() else "target"
+        target_call = f"{safe_fn}()"
 
     # Handle expected exception vs value assertion
     assertion_block = ""
@@ -40,7 +148,8 @@ def generate_reproduction_test_code(
         exc_name = expected_behavior.split("raises ", 1)[1].strip()
         assertion_block = f"    with pytest.raises({exc_name}):\n        {target_call}\n"
     elif expected_behavior and ("==" in expected_behavior or "assert" in expected_behavior):
-        assertion_block = f"    assert {expected_behavior}\n"
+        safe_expr = _validate_safe_expression(expected_behavior, "expected_behavior")
+        assertion_block = f"    assert {safe_expr}\n"
     else:
         # Default assertion: call succeeds without unexpected error
         assertion_block = f"    result = {target_call}\n    assert result is not None\n"
