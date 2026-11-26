@@ -1,11 +1,25 @@
 """Markdown report generator for bug diagnostics and multi-agent repair tournaments."""
 
+import re
 from pathlib import Path
 
 from bugarena.models.bug import BugSpec
 from bugarena.models.repro import ReproTestSpec
 from bugarena.models.tournament import TournamentRecord
 from bugarena.sandbox.security import validate_safe_path
+
+
+def _md_cell(value: object) -> str:
+    """Normalize line breaks and escape Markdown table delimiters inside cells."""
+    flattened = " ".join(str(value).replace("\r\n", "\n").replace("\r", "\n").splitlines())
+    return flattened.replace("|", r"\|")
+
+
+def fenced_markdown_block(content: str, lang: str = "") -> str:
+    """Wrap content in a Markdown code fence longer than any internal backtick run."""
+    longest = max((len(m.group(0)) for m in re.finditer(r"`+", content)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return f"{fence}{lang}\n{content.strip()}\n{fence}"
 
 
 def save_markdown_report(
@@ -51,37 +65,31 @@ def format_bug_diagnostic_markdown(
             conf_pct = f"{s.confidence * 100:.0f}%"
             line_str = f"L{s.line_range[0]}-L{s.line_range[1]}"
             lines.append(
-                f"| `{s.file_path}` | `{s.function_name}` | {line_str} | `{s.bug_type}` | {conf_pct} | {s.reasoning} |"
+                f"| `{_md_cell(s.file_path)}` | `{_md_cell(s.function_name)}` | {line_str} | `{_md_cell(s.bug_type)}` | {conf_pct} | {_md_cell(s.reasoning)} |"
             )
         lines.append("")
 
         primary = bug_spec.suspects[0]
         if primary.code_snippet:
             lines.append("### Primary Suspect Code Slice")
-            lines.append(f"*File: `{primary.file_path}` (Lines {primary.line_range[0]} to {primary.line_range[1]})*")
-            lines.append("```python")
-            lines.append(primary.code_snippet.strip())
-            lines.append("```")
+            lines.append(f"*File: `{_md_cell(primary.file_path)}` (Lines {primary.line_range[0]} to {primary.line_range[1]})*")
+            lines.append(fenced_markdown_block(primary.code_snippet, "python"))
             lines.append("")
 
     if bug_spec.error_log:
         lines.append("### Error Log / Stack Trace")
-        lines.append("```")
-        lines.append(bug_spec.error_log.strip())
-        lines.append("```")
+        lines.append(fenced_markdown_block(bug_spec.error_log))
         lines.append("")
 
     if repro_spec:
         lines.append("## 2. Failing Reproduction Test (Red Baseline)")
-        lines.append(f"- **Test File**: `{repro_spec.test_file_path}`")
+        lines.append(f"- **Test File**: `{_md_cell(repro_spec.test_file_path)}`")
         if repro_spec.expected_exception:
-            lines.append(f"- **Expected Exception / Failure**: `{repro_spec.expected_exception}`")
+            lines.append(f"- **Expected Exception / Failure**: `{_md_cell(repro_spec.expected_exception)}`")
         status_label = "VERIFIED (Fails before fix)" if repro_spec.red_baseline_verified else "UNVERIFIED"
         lines.append(f"- **Red Baseline Status**: `{status_label}`")
         lines.append("")
-        lines.append("```python")
-        lines.append(repro_spec.test_code.strip())
-        lines.append("```")
+        lines.append(fenced_markdown_block(repro_spec.test_code, "python"))
         lines.append("")
 
     return "\n".join(lines)
@@ -125,9 +133,9 @@ def format_markdown_report(
     # Section 3: Leaderboard Table
     lines.append("## Tournament Leaderboard")
     lines.append(
-        "| Rank | Candidate ID | Persona | Repro Passed | Regressions | Churn (LOC) | Complexity Δ | Score | Status |"
+        "| Rank | Candidate ID | Persona | Repro Passed | Regressions | Churn (LOC) | Complexity Δ | Score | Status | Notes |"
     )
-    lines.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
+    lines.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
 
     cand_map = {c.candidate_id: c for c in tournament.candidates}
     sorted_evals = sorted(tournament.evaluations, key=lambda e: e.score, reverse=True)
@@ -141,9 +149,10 @@ def format_markdown_report(
             if ev.candidate_id == tournament.champion_candidate_id
             else ("DISQUALIFIED" if ev.disqualified else "EVALUATED")
         )
+        notes_str = _md_cell(ev.disqualification_reason) if ev.disqualification_reason else "-"
 
         lines.append(
-            f"| {idx} | `{ev.candidate_id}` | {persona_str} | {repro_str} | {ev.regressions_count} | {ev.diff_churn} | {ev.cyclomatic_delta} | **{ev.score:.1f}** | `{status_str}` |"
+            f"| {idx} | `{_md_cell(ev.candidate_id)}` | {_md_cell(persona_str)} | {repro_str} | {ev.regressions_count} | {ev.diff_churn} | {ev.cyclomatic_delta} | **{ev.score:.1f}** | `{status_str}` | {notes_str} |"
         )
 
     lines.append("")
@@ -154,17 +163,15 @@ def format_markdown_report(
     )
     if champion:
         lines.append("## Winning Champion Patch")
-        lines.append(f"- **Candidate ID**: `{champion.candidate_id}`")
+        lines.append(f"- **Candidate ID**: `{_md_cell(champion.candidate_id)}`")
         lines.append(f"- **Agent Persona**: `{champion.persona.value}`")
         lines.append(
             f"- **Lines Added / Deleted**: +{champion.lines_added} / -{champion.lines_deleted}"
         )
-        lines.append(f"- **Explanation**: {champion.explanation}")
+        lines.append(f"- **Explanation**: {_md_cell(champion.explanation)}")
         lines.append("")
         lines.append("### Unified Diff")
-        lines.append("```diff")
-        lines.append(champion.diff)
-        lines.append("```")
+        lines.append(fenced_markdown_block(champion.diff, "diff"))
         lines.append("")
         lines.append("### How to Apply This Fix")
         lines.append(
