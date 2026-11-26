@@ -19,7 +19,12 @@ _VALID_RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 QUESTIONNAIRE_ITEMS: tuple[dict[str, Any], ...] = (
     {"id": "site_url", "question": "Target site URL to audit (type or paste URL now)", "required": True},
     {"id": "authorization", "question": "Authorization level: own / written_permission / neither (neither forces passive mode)", "required": True},
-    {"id": "browsers", "question": "Browsers to grant (chrome, brave, helium — supply helium_path if not auto-detected)", "required": False, "default": ["chrome"]},
+    {
+        "id": "browsers",
+        "question": "Select which browser(s) to permit via IDE permission prompt or explicit list (none granted by default; supply <name>_path for custom installs)",
+        "required": True,
+        "default": [],
+    },
     {"id": "access_level", "question": "Access level: full_access (requires own/written_permission) or passive", "required": False, "default": "full_access"},
     {"id": "profile_mode", "question": "Profile mode: fresh_isolated (default) or dedicated_existing (warning: never daily profile)", "required": False, "default": "fresh_isolated"},
     {"id": "authenticated_areas", "question": "Does the site have authenticated areas you will log into manually in a headed window? (yes/no)", "required": False, "default": False},
@@ -55,13 +60,20 @@ class SessionManager:
             "OPENAI_API_KEY": bool(os.environ.get("OPENAI_API_KEY")),
             "DEEPSEEK_API_KEY": bool(os.environ.get("DEEPSEEK_API_KEY")),
         }
+        installed_names = [b["name"] for b in browsers if b["found"]]
+        questions: list[dict[str, Any]] = []
+        for item in QUESTIONNAIRE_ITEMS:
+            q = dict(item)
+            if q["id"] == "browsers":
+                q["options"] = installed_names
+            questions.append(q)
         return {
             "status": "AWAITING_CONFIRMATION",
             "user_hint": user_hint or "",
             "detected_browsers": browsers,
             "api_keys_present": keys_present,
-            "questions": list(QUESTIONNAIRE_ITEMS),
-            "note": "No browser or network probe starts until session_confirm(answers) is called.",
+            "questions": questions,
+            "note": "No browser or network probe starts until IDE browser permission / session_confirm(answers) grants explicit access.",
         }
 
     def session_confirm(
@@ -109,10 +121,14 @@ class SessionManager:
             active_tools = [t for t in tools_allowed if t not in tools_denied]
 
         token = secrets.token_urlsafe(24)
-        raw_browsers = answers.get("browsers") or ["chrome"]
-        requested_browsers = (
-            [raw_browsers.lower()] if isinstance(raw_browsers, str) else [str(b).lower() for b in raw_browsers]
-        )
+        raw_browsers = answers.get("browsers")
+        if raw_browsers is None:
+            requested_browsers: list[str] = []
+        elif isinstance(raw_browsers, str):
+            b_clean = raw_browsers.strip().lower()
+            requested_browsers = [b_clean] if b_clean else []
+        else:
+            requested_browsers = [str(b).strip().lower() for b in raw_browsers if str(b).strip()]
         overrides = {
             k.removesuffix("_path").lower(): str(v)
             for k, v in answers.items()
@@ -130,7 +146,7 @@ class SessionManager:
             f"- **Authorization:** `{policy.authorization}`",
             f"- **Effective Access Level:** `{policy.access_level}`",
             f"- **Rate Limit:** `<= {policy.max_rps} req/s` | **robots.txt honored:** `{policy.respect_robots_txt}`",
-            f"- **Requested Browsers:** `{', '.join(requested_browsers)}`",
+            f"- **Requested Browsers:** `{', '.join(requested_browsers) if requested_browsers else 'None granted'}`",
             f"- **Profile Mode:** `{profile_mode}`",
         ]
         if profile_warning:
@@ -160,12 +176,46 @@ class SessionManager:
             "session_token": token,
             "access_level": policy.access_level,
             "authorization": policy.authorization,
+            "browsers": requested_browsers,
+            "browser_permission_granted": bool(requested_browsers),
             "max_rps": policy.max_rps,
             "scope_file": str(scope_file),
             "active_tools": active_tools,
             "profile_warning": profile_warning,
             "detected_browsers": session_rec["detected_browsers"],
         }
+
+    def grant_browsers(
+        self,
+        run_id: str,
+        browsers: list[str],
+        *,
+        overrides: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """Update permitted browsers for an active session (e.g., via IDE elicitation)."""
+        sess = self.get_session(run_id)
+        cleaned = [str(b).strip().lower() for b in browsers if str(b).strip()]
+        existing_overrides = {
+            k.removesuffix("_path").lower(): str(v)
+            for k, v in sess.get("answers", {}).items()
+            if k.endswith("_path") and v and k != "project_path"
+        }
+        if overrides:
+            existing_overrides.update({k.lower(): str(v) for k, v in overrides.items() if v})
+            for k, v in overrides.items():
+                if v:
+                    sess["answers"][f"{k.lower()}_path"] = str(v)
+        detected = {b.name: b for b in discover_browsers(overrides=existing_overrides)}
+        sess["browsers"] = list(dict.fromkeys([*sess["browsers"], *cleaned]))
+        sess["answers"]["browsers"] = list(sess["browsers"])
+        sess["detected_browsers"] = {k: v.model_dump() for k, v in detected.items()}
+        scope_file = Path(sess["scope_file"])
+        if scope_file.is_file():
+            txt = scope_file.read_text(encoding="utf-8")
+            updated_line = f"- **Requested Browsers:** `{', '.join(sess['browsers']) if sess['browsers'] else 'None granted'}`"
+            txt = re.sub(r"^- \*\*Requested Browsers:\*\* .*$", updated_line, txt, flags=re.MULTILINE)
+            scope_file.write_text(txt, encoding="utf-8")
+        return sess
 
     def get_session(self, run_id: str) -> dict[str, Any]:
         if run_id not in self._sessions:

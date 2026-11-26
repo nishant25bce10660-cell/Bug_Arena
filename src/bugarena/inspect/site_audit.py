@@ -99,6 +99,12 @@ class SiteAuditCoordinator:
         ledger = ClaimLedger(run_dir, vault=vault, scoreboard=scoreboard)
         transcript = TranscriptLogger(run_dir)
 
+        if not sess["browsers"]:
+            from bugarena.browser.cursor import AuthorizationError
+
+            raise AuthorizationError(
+                "No browser access granted; permit at least one browser via IDE prompt or session_confirm(answers={'browsers': [...]})."
+            )
         answers = sess.get("answers", {})
         overrides = {
             k.removesuffix("_path").lower(): str(v)
@@ -107,10 +113,11 @@ class SiteAuditCoordinator:
         }
         detected = discover_browsers(overrides=overrides)
         by_name = {b.name: b for b in detected}
-        requested = [b for b in sess["browsers"] if b in by_name and by_name[b].found]
+        granted = [b.lower() for b in sess["browsers"]]
+        requested = [b for b in granted if b in by_name and by_name[b].found]
         skipped_browsers = {
             b: by_name[b].notes if b in by_name else "Unknown browser"
-            for b in sess["browsers"]
+            for b in granted
             if b not in requested
         }
         if not requested:
@@ -306,6 +313,14 @@ class SiteAuditCoordinator:
                 f"Unknown panel {panel!r} (unsupported in single-browser inspect_panel); supported: {sorted(_INSPECT_PANEL_NAMES)}"
             )
         policy: AccessPolicy = sess["policy"]
+        b_low = browser.strip().lower()
+        granted = [b.lower() for b in sess.get("browsers", [])]
+        if b_low not in granted:
+            from bugarena.browser.cursor import AuthorizationError
+
+            raise AuthorizationError(
+                f"Browser '{browser}' is not permitted for this session; granted browsers: {granted}."
+            )
         run_dir = Path(sess["run_dir"])
         vault = EvidenceVault(run_dir)
         transcript = TranscriptLogger(run_dir)
@@ -316,14 +331,14 @@ class SiteAuditCoordinator:
             if k.endswith("_path") and v and k != "project_path"
         }
         by_name = {b.name: b for b in discover_browsers(overrides=overrides)}
-        if browser not in by_name or not by_name[browser].found:
+        if b_low not in by_name or not by_name[b_low].found:
             raise FileNotFoundError(f"Browser '{browser}' not found on host.")
 
         target_url = str((args or {}).get("url") or policy.site_url)
         meta_res = await collect_robots_and_sitemap(target_url, vault)
         robots_disallow: tuple[str, ...] = tuple(meta_res.get("robots_disallow", ()))
         policy.assert_action_allowed("navigate", target_url=target_url, robots_disallow=robots_disallow)
-        cursor = await BrowserCursor.launch(browser_name=browser, executable=by_name[browser].executable, headless=True)
+        cursor = await BrowserCursor.launch(browser_name=b_low, executable=by_name[b_low].executable, headless=True)
         try:
             assert cursor.cdp is not None
             await enable_base_domains(cursor.cdp)

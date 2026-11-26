@@ -1,9 +1,9 @@
 # BugArena MCP — Project & Audit Report
 
-- **Generated (UTC):** `2026-11-26T14:12:57+00:00`
+- **Generated (UTC):** `2026-11-26T15:20:28+00:00`
 - **Repository:** `MCP server`
-- **Branch / HEAD:** `upgrade/bugarena-agents` @ `9ee6cc8`
-- **Tracked Files:** `186` across `23` audited areas
+- **Branch / HEAD:** `upgrade/bugarena-agents` @ `6b0a52b`
+- **Tracked Files:** `187` across `23` audited areas
 - **Auto-Update Trigger:** `.githooks/pre-commit` + `scripts/update_project_report.py` + `AGENTS.md`
 
 ## Audit Verdict
@@ -17,7 +17,7 @@
 | Check | Result | Details |
 | :--- | :--- | :--- |
 | `ruff check src tests scripts` | **PASS (0 issues)** | `All checks passed!` |
-| `pytest -q -m "not slow and not browser"` | **PASS (157 passed, 6 deselected in 43.90s)** | `Isolated unit + regression suites` |
+| `pytest -q -m "not slow and not browser"` | **PASS (160 passed, 6 deselected in 60.85s (0:01:00))** | `Isolated unit + regression suites` |
 | `LoopOperator` Read-Only Audit | **PASS** | `23 areas, 0 open confirmed` |
 
 ## MCP Tools
@@ -39,7 +39,7 @@ Total registered tools: **26**
 | `audit_report` | Generate an evidence-graded audit report; output_file is confined by validate_safe_path. |
 | `fix_loop_start` | Execute test-first fix evaluation over confirmed ledger findings (LLM generation gated by auto_generate). |
 | `session_prepare` | Detect installed Chrome/Brave/Helium browsers, check API key presence, and return the 13-question pre-start gate without launching any browser. |
-| `session_confirm` | Validate questionnaire answers, enforce passive mode when unauthorized, write scope_and_authorization.md, and issue a session token. |
+| `session_confirm` | Validate questionnaire answers, request IDE browser permission when omitted, enforce passive mode when unauthorized, write scope_and_authorization.md, and issue a session token. |
 | `site_audit_start` | Start a multi-browser site audit run for a confirmed session_token and run the initial DevTools sweep. |
 | `site_audit_round` | Execute another multi-browser DevTools inspection, verification, and honesty-audit round for an active site_audit run_id. |
 | `site_audit_status` | Return confirmed/retracted/rejected claim counts, vault integrity, and details for a site_audit run_id. |
@@ -74,7 +74,7 @@ Total registered tools: **26**
 | `server` | 1 | YES | YES | - |
 | `skills_merge` | 2 | YES | YES | - |
 | `synthesizer` | 3 | YES | YES | - |
-| `tests` | 65 | YES | YES | - |
+| `tests` | 66 | YES | YES | - |
 | `tournament` | 3 | YES | YES | - |
 | `truth` | 5 | YES | YES | - |
 | `verify` | 2 | YES | YES | - |
@@ -83,6 +83,7 @@ Total registered tools: **26**
 No open audit findings detected in the current codebase.
 
 ## Recent Changes
+- `6b0a52b docs: complete v2 requirements traceability with observed proof`
 - `9ee6cc8 fix(hardening): close fail-open ACLs, SSRF origin check, robots pre-nav, and error surfacing`
 - `e8391a0 fix(hardening): tighten truth scoreboard, inspect lifecycle, sourcemap linking, verifier, and skill merge`
 - `809c356 fix(hardening): enforce v2 session ACLs, AccessPolicy bounds, and CDP/cursor cleanup`
@@ -94,11 +95,15 @@ No open audit findings detected in the current codebase.
 - `c3a81bd feat(browser): add Chromium discovery, RFC 6455 CDP client, isolated [mcp_<browser>] cursors, and access gate`
 - `977b8f2 feat(truth): add EvidenceVault hash chain, ClaimLedger, CitationChecker, Scoreboard, and TranscriptLogger`
 - `3f51417 docs(phase1): add v2 PLAN, ARCHITECTURE, THREAT_MODEL, REQUIREMENTS_TRACE, and DEVIATIONS`
-- `7e95e91 fix(phase0): reconcile state, enforce real coverage, add tool descriptions & pytest markers`
 
 ## Working Tree Snapshot (`git status --short`)
 ```text
-M  docs/REQUIREMENTS_TRACE.md
+M  docs/tools.md
+M  src/bugarena/browser/discovery.py
+M  src/bugarena/browser/questionnaire.py
+M  src/bugarena/inspect/site_audit.py
+M  src/bugarena/server.py
+A  tests/unit/test_browser_permission_ide.py
 ```
 
 ## How This Report Stays Updated

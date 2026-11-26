@@ -103,17 +103,19 @@ def discover_browsers(
     exe_names = {"chrome": "chrome.exe", "brave": "brave.exe", "helium": "helium.exe"}
     results: list[BrowserInstall] = []
 
-    for name in ("chrome", "brave", "helium"):
+    ordered_names = ["chrome", "brave", "helium", *(k for k in custom if k not in ("chrome", "brave", "helium"))]
+    for name in ordered_names:
         resolved: str | None = None
         note = ""
         if name in custom and Path(custom[name]).is_file():
             resolved = str(Path(custom[name]).resolve())
             note = "User-supplied executable path."
+        exe_name = exe_names.get(name, f"{name}.exe")
         if not resolved:
-            which_hit = shutil.which(name) or shutil.which(exe_names[name])
+            which_hit = shutil.which(name) or shutil.which(exe_name)
             if which_hit and Path(which_hit).is_file():
                 resolved = str(Path(which_hit).resolve())
-        if not resolved:
+        if not resolved and name in exe_names:
             resolved = _windows_registry_path(exe_names[name])
         if not resolved:
             for cand in _candidate_paths(name):

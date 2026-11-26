@@ -140,7 +140,7 @@ Execute test-first fix evaluation over confirmed ledger findings (LLM generation
 ## v2 Site Audit, Truth Protocol, Verification, & Skill Merge Tools
 
 - `session_prepare(user_hint=None)`: Detect Chrome/Brave/Helium, check API key presence, return 13-question pre-start gate.
-- `session_confirm(answers)`: Validate answers, force passive mode when unauthorized, write `scope_and_authorization.md`, issue `session_token`.
+- `session_confirm(answers)`: Validate answers, request explicit IDE browser permission (`ctx.elicit` with zero predefined browsers), force passive mode when unauthorized, write `scope_and_authorization.md`, issue `session_token`.
 - `site_audit_start(url, run_id, session_token, headless=True, panels='all')`: Launch isolated `[mcp_<browser>]` cursors and run DevTools audit.
 - `site_audit_round(run_id, headless=True, panels='all')`: Run an extra multi-browser verification and honesty-audit round.
 - `site_audit_status(run_id)`: Inspect claim counts and `EvidenceVault` SHA-256 chain status.

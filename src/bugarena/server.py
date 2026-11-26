@@ -8,7 +8,8 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
-from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver import Context, MCPServer
+from pydantic import Field, create_model
 
 from bugarena.audit.fix_loop import run_fix_loop_session
 from bugarena.audit.loop import LoopOperator
@@ -855,14 +856,83 @@ async def session_prepare(user_hint: str | None = None) -> dict[str, Any]:
     return _scrub_payload(res)
 
 
-@mcp.tool(description="Validate questionnaire answers, enforce passive mode when unauthorized, write scope_and_authorization.md, and issue a session token.")
-async def session_confirm(answers: dict[str, Any]) -> dict[str, Any]:
+async def _request_ide_browser_permission(
+    ctx: Context | None,
+    *,
+    target_url: str,
+    overrides: dict[str, str] | None = None,
+) -> tuple[list[str], dict[str, str]]:
+    """
+    Ask the IDE user interactively via MCP elicitation which discovered browser(s) to permit.
+    Every browser starts unchecked (False) — no browser is predefined.
+    """
+    if ctx is None or getattr(ctx, "request_context", None) is None or not hasattr(ctx, "elicit"):
+        return [], {}
+    from bugarena.browser.discovery import discover_browsers
+
+    found = [b for b in discover_browsers(overrides=overrides) if b.found]
+    fields: dict[str, Any] = {
+        f"allow_{b.name}": (
+            bool,
+            Field(default=False, description=f"Permit {b.name} ({b.executable})"),
+        )
+        for b in found
+    }
+    fields["custom_browser_name"] = (
+        str,
+        Field(default="", description="Optional unlisted browser name (e.g. edge, helium)"),
+    )
+    fields["custom_browser_path"] = (
+        str,
+        Field(default="", description="Optional executable path for custom browser"),
+    )
+    PermissionSchema = create_model("IDEBrowserPermissionRequest", **fields)
+    names_label = ", ".join(b.name for b in found) or "none auto-detected"
+    try:
+        elicit_res = await ctx.elicit(
+            f"Grant BugArena isolated CDP access for {target_url or 'target site'}? "
+            f"Detected browsers: {names_label}. All options start unchecked.",
+            PermissionSchema,
+        )
+    except Exception:  # noqa: BLE001
+        return [], {}
+    if getattr(elicit_res, "action", None) != "accept" or getattr(elicit_res, "data", None) is None:
+        return [], {}
+    data = elicit_res.data
+    chosen = [b.name for b in found if getattr(data, f"allow_{b.name}", False)]
+    custom_overrides: dict[str, str] = {}
+    c_name = str(getattr(data, "custom_browser_name", "") or "").strip().lower()
+    c_path = str(getattr(data, "custom_browser_path", "") or "").strip()
+    if c_name and c_path:
+        chosen.append(c_name)
+        custom_overrides[c_name] = c_path
+    return chosen, custom_overrides
+
+
+@mcp.tool(description="Validate questionnaire answers, request IDE browser permission when omitted, enforce passive mode when unauthorized, write scope_and_authorization.md, and issue a session token.")
+async def session_confirm(answers: dict[str, Any], ctx: Context | None = None) -> dict[str, Any]:
     """Validate pre-start answers and authorize a scoped audit session."""
+    enriched = dict(answers)
+    if enriched.get("browsers") is None:
+        overrides = {
+            k.removesuffix("_path").lower(): str(v)
+            for k, v in enriched.items()
+            if k.endswith("_path") and v and k != "project_path"
+        }
+        chosen, extra_ovr = await _request_ide_browser_permission(
+            ctx,
+            target_url=str(enriched.get("site_url") or ""),
+            overrides=overrides,
+        )
+        if chosen:
+            enriched["browsers"] = chosen
+            for k, v in extra_ovr.items():
+                enriched[f"{k}_path"] = v
     registered = await mcp.list_tools()
     tool_names = tuple(t.name for t in registered)
     res = await asyncio.to_thread(
         _SITE_COORDINATOR.sessions.session_confirm,
-        answers,
+        enriched,
         all_tool_names=tool_names,
     )
     return _scrub_payload(res)
@@ -875,10 +945,15 @@ async def site_audit_start(
     session_token: str,
     headless: bool = True,
     panels: str | list[str] = "all",
+    ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Begin multi-browser DevTools site audit strictly after session_confirm authorization."""
+    """Begin multi-browser DevTools site audit strictly after session_confirm & IDE browser permission."""
     sess = _authorize_v2_tool(run_id, "site_audit_start", session_token)
     sess["policy"].assert_action_allowed("navigate", target_url=url)
+    if not sess["browsers"]:
+        chosen, extra_ovr = await _request_ide_browser_permission(ctx, target_url=url)
+        if chosen:
+            _SITE_COORDINATOR.sessions.grant_browsers(run_id, chosen, overrides=extra_ovr)
     res = await _SITE_COORDINATOR.start_and_run_round(run_id, headless=headless, panels=panels, target_url=url)
     return _scrub_payload(res)
 
@@ -889,9 +964,14 @@ async def site_audit_round(
     headless: bool = True,
     panels: str | list[str] = "all",
     session_token: str = "",
+    ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Execute one multi-browser site audit round on an existing confirmed session."""
-    _authorize_v2_tool(run_id, "site_audit_round", session_token)
+    sess = _authorize_v2_tool(run_id, "site_audit_round", session_token)
+    if not sess["browsers"]:
+        chosen, extra_ovr = await _request_ide_browser_permission(ctx, target_url=sess["policy"].site_url)
+        if chosen:
+            _SITE_COORDINATOR.sessions.grant_browsers(run_id, chosen, overrides=extra_ovr)
     res = await _SITE_COORDINATOR.start_and_run_round(run_id, headless=headless, panels=panels)
     return _scrub_payload(res)
 
@@ -919,9 +999,17 @@ async def inspect_panel(
     panel: str,
     args: dict[str, Any] | None = None,
     session_token: str = "",
+    ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Inspect one specific DevTools panel on a granted browser cursor."""
-    _authorize_v2_tool(run_id, "inspect_panel", session_token)
+    sess = _authorize_v2_tool(run_id, "inspect_panel", session_token)
+    if browser.strip().lower() not in [b.lower() for b in sess.get("browsers", [])]:
+        chosen, extra_ovr = await _request_ide_browser_permission(
+            ctx,
+            target_url=str((args or {}).get("url") or sess["policy"].site_url),
+        )
+        if chosen:
+            _SITE_COORDINATOR.sessions.grant_browsers(run_id, chosen, overrides=extra_ovr)
     res = await _SITE_COORDINATOR.inspect_panel(run_id, browser, panel, args)
     return _scrub_payload(res)
 
