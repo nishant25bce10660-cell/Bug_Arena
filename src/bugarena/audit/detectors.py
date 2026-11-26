@@ -510,13 +510,13 @@ with tempfile.TemporaryDirectory() as d:
 import sys
 from bugarena.models.agent import PersonaType
 from bugarena.tournament.patch_parser import PatchValidationError, parse_and_validate_patch
-diff = "--- a/./tests/repro/secret.py\\n+++ b/./tests/repro/secret.py\\n@@ -1,1 +1,1 @@\\n-assert False\\n+assert True\\n"
+diff = "--- a/tests/repro/secret.py\\r\\n+++ /dev/null\\r\\n@@ -1,1 +0,0 @@\\r\\n-assert False\\r\\n"
 try:
     parse_and_validate_patch(diff, PersonaType.SURGICAL_MINIMALIST, "cheat", protected_paths=["tests/repro/secret.py"])
-    print("REPRODUCED: ./ bypass allowed modifying protected file")
+    print("REPRODUCED: /dev/null + CRLF bypass allowed deleting protected file")
     sys.exit(1)
 except PatchValidationError:
-    print("DISPROVED: ./ path blocked properly")
+    print("DISPROVED: /dev/null and CRLF blocked properly")
 """,
                 suggested_fix="Normalize CRLF and paths with posixpath.normpath, reject '..'/absolute, match exact/parent path segments, validate @@ hunks, and count churn inside hunks only.",
                 risks="Header-only empty diffs without @@ hunks will rightly be rejected.",
@@ -999,10 +999,10 @@ with tempfile.TemporaryDirectory() as d:
     repro = ReproTestSpec(test_file_path="t.py", test_code="def test_x(): assert False", red_baseline_verified=True)
     cand = CandidatePatch(candidate_id="c1", persona=PersonaType.SURGICAL_MINIMALIST, explanation="x", lines_added=1, lines_deleted=0, diff="--- a/../../etc/x\\n+++ b/../../etc/x\\n@@ -1 +1 @@\\n+hi\\n")
     evals, _ = PatchEvaluator(r).evaluate_candidates([cand], repro)
-    if "apply" not in (evals[0].disqualification_reason or "").lower() and "patch" not in (evals[0].disqualification_reason or "").lower():
-        print(f"REPRODUCED: misleading reason={evals[0].disqualification_reason!r}")
+    if "traversal" not in (evals[0].disqualification_reason or "").lower() and "security" not in (evals[0].disqualification_reason or "").lower():
+        print(f"REPRODUCED: swallowed apply error -> misleading reason={evals[0].disqualification_reason!r}")
         sys.exit(1)
-    print("DISPROVED: recorded patch failure reason")
+    print("DISPROVED: recorded actual apply failure reason")
 """,
                 suggested_fix="Record scrubbed apply exception reason directly in PatchEvaluation(disqualification_reason=...).",
                 risks="None.",
@@ -1641,37 +1641,41 @@ print("DISPROVED: table escaped and disqualification_reason rendered")
     if role == "architect":
         execute_grounding_tool("git_ls", allowed, repo)
         srv_text, srv_lines = _read_rel(repo, "src/bugarena/server.py")
-        if srv_text and "TournamentRunner" not in srv_text:
-            ln = _find_line(srv_lines, r"def bugarena_autonomous_repair")
-            findings.append(
-                _draft(
-                    title="TournamentRunner and MultiModelDispatcher are unwired dead code from MCP server",
-                    file="src/bugarena/server.py",
-                    line_start=ln,
-                    line_end=ln + 20,
-                    symbol="bugarena_autonomous_repair",
-                    category="architecture",
-                    what_it_is="TournamentRunner and MultiModelDispatcher are never wired into MCP server handlers.",
-                    what_it_does="MCP server cannot trigger LLM-backed tournament generation even when configured.",
-                    root_cause="server.py only accepts manual candidate_patches_raw and never integrates TournamentRunner.",
-                    inputs="Search server.py for TournamentRunner",
-                    expected="Server wires TournamentRunner/MultiModelDispatcher cleanly behind auto_generate=False gate",
-                    actual="TournamentRunner not imported or reachable from server.py",
-                    probe_script="""
+        if srv_text and "def agent_fix_tournament" in srv_text:
+            aft_slice = srv_text.split("def agent_fix_tournament", 1)[1].split("@mcp.tool()", 1)[0]
+            if "TournamentRunner" not in aft_slice and "auto_generate" not in aft_slice:
+                ln = _find_line(srv_lines, r"def agent_fix_tournament")
+                findings.append(
+                    _draft(
+                        title="TournamentRunner and MultiModelDispatcher are unwired from agent_fix_tournament/autonomous repair",
+                        file="src/bugarena/server.py",
+                        line_start=ln,
+                        line_end=ln + 25,
+                        symbol="agent_fix_tournament / bugarena_autonomous_repair",
+                        category="architecture",
+                        what_it_is="TournamentRunner and MultiModelDispatcher are disconnected from MCP server repair flows.",
+                        what_it_does="MCP server cannot trigger persona patch generation even when auto_generate=True is requested.",
+                        root_cause="agent_fix_tournament and bugarena_autonomous_repair do not wire TournamentRunner behind auto_generate=False.",
+                        inputs="Inspect agent_fix_tournament for auto_generate/TournamentRunner",
+                        expected="TournamentRunner wired behind auto_generate: bool = False",
+                        actual="TournamentRunner disconnected from agent_fix_tournament",
+                        probe_script="""
 import sys
 from pathlib import Path
-if "TournamentRunner" not in Path("src/bugarena/server.py").read_text(encoding="utf-8"):
-    print("REPRODUCED: TournamentRunner not wired into server.py")
+txt = Path("src/bugarena/server.py").read_text(encoding="utf-8")
+aft = txt.split("def agent_fix_tournament", 1)[1].split("@mcp.tool()", 1)[0]
+if "auto_generate" not in aft and "TournamentRunner" not in aft:
+    print("REPRODUCED: TournamentRunner not wired into agent_fix_tournament")
     sys.exit(1)
-print("DISPROVED: TournamentRunner wired into server.py")
+print("DISPROVED: TournamentRunner wired behind auto_generate")
 """,
-                    suggested_fix="Wire TournamentRunner/MultiModelDispatcher into server tools gated behind auto_generate: bool = False.",
-                    risks="Default auto_generate=False prevents unintended paid API calls.",
-                    regression_test_idea="Test server tool auto_generate=True invokes injected/mocked TournamentRunner without hitting live network",
-                    severity=SeverityLevel.MEDIUM,
-                    found_by=role,
+                        suggested_fix="Wire TournamentRunner/MultiModelDispatcher into server tools gated behind auto_generate: bool = False.",
+                        risks="Default auto_generate=False prevents unintended paid API calls.",
+                        regression_test_idea="Test server tool auto_generate=True invokes injected/mocked TournamentRunner without hitting live network",
+                        severity=SeverityLevel.MEDIUM,
+                        found_by=role,
+                    )
                 )
-            )
 
     return findings
 
