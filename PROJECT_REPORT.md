@@ -1,9 +1,9 @@
 # BugArena MCP — Project & Audit Report
 
-- **Generated (UTC):** `2026-11-26T11:38:11+00:00`
+- **Generated (UTC):** `2026-11-26T11:40:36+00:00`
 - **Repository:** `MCP server`
-- **Branch / HEAD:** `upgrade/bugarena-agents` @ `a4ef4b1`
-- **Tracked Files:** `175` across `21` audited areas
+- **Branch / HEAD:** `upgrade/bugarena-agents` @ `897c0be`
+- **Tracked Files:** `179` across `22` audited areas
 - **Auto-Update Trigger:** `.githooks/pre-commit` + `scripts/update_project_report.py` + `AGENTS.md`
 
 ## Audit Verdict
@@ -17,8 +17,8 @@
 | Check | Result | Details |
 | :--- | :--- | :--- |
 | `ruff check src tests scripts` | **PASS (0 issues)** | `All checks passed!` |
-| `pytest -q -m "not slow and not browser"` | **PASS (128 passed, 4 deselected in 16.82s)** | `Isolated unit + regression suites` |
-| `LoopOperator` Read-Only Audit | **PASS** | `21 areas, 0 open confirmed` |
+| `pytest -q -m "not slow and not browser"` | **PASS (129 passed, 5 deselected in 19.23s)** | `Isolated unit + regression suites` |
+| `LoopOperator` Read-Only Audit | **PASS** | `22 areas, 0 open confirmed` |
 
 ## MCP Tools
 Total registered tools: **13**
@@ -55,19 +55,21 @@ Total registered tools: **13**
 | `packaging` | 4 | YES | YES | - |
 | `personas` | 2 | YES | YES | - |
 | `providers` | 3 | YES | YES | - |
-| `reporting` | 2 | YES | YES | - |
+| `reporting` | 3 | YES | YES | - |
 | `sandbox` | 4 | YES | YES | - |
 | `scripts` | 3 | YES | YES | - |
 | `server` | 1 | YES | YES | - |
 | `synthesizer` | 3 | YES | YES | - |
-| `tests` | 59 | YES | YES | - |
+| `tests` | 60 | YES | YES | - |
 | `tournament` | 3 | YES | YES | - |
 | `truth` | 5 | YES | YES | - |
+| `verify` | 2 | YES | YES | - |
 
 ## Active Audit Findings
 No open audit findings detected in the current codebase.
 
 ## Recent Changes
+- `897c0be feat(v2): add site analyst roster, SiteAuditCoordinator, VLQ sourcemap linker, and Grok/Gemini cross-vendor analysis`
 - `a4ef4b1 feat(inspect): add 14 DevTools CDP collectors, coverage_matrix.md, and planted-bug fixture site`
 - `c3a81bd feat(browser): add Chromium discovery, RFC 6455 CDP client, isolated [mcp_<browser>] cursors, and access gate`
 - `977b8f2 feat(truth): add EvidenceVault hash chain, ClaimLedger, CitationChecker, Scoreboard, and TranscriptLogger`
@@ -79,31 +81,14 @@ No open audit findings detected in the current codebase.
 - `d2ba121 fix(audit): fix log_parser detector match, patch_parser probe, and agents/audit circular import`
 - `4cf3bdb fix(ECC-020): escape markdown tables, use adaptive fences, show disqualification, frame prompts`
 - `dec8234 fix(ECC-040): sync README and SKILL docs with MCP tools, scoring, and portable config`
-- `9c1dfde fix(ECC-039): replace tautological security assertion and test all 5 providers with MockTransport`
 
 ## Working Tree Snapshot (`git status --short`)
 ```text
-M  src/bugarena/agents/__init__.py
-A  src/bugarena/agents/prompts/console_analyst.md
-A  src/bugarena/agents/prompts/cross_browser_diff_analyst.md
-A  src/bugarena/agents/prompts/dom_a11y_analyst.md
-A  src/bugarena/agents/prompts/honesty_auditor.md
-A  src/bugarena/agents/prompts/js_source_analyst.md
-A  src/bugarena/agents/prompts/merge_analyst.md
-A  src/bugarena/agents/prompts/network_analyst.md
-A  src/bugarena/agents/prompts/performance_memory_analyst.md
-A  src/bugarena/agents/prompts/report_writer.md
-A  src/bugarena/agents/prompts/responsive_analyst.md
-A  src/bugarena/agents/prompts/storage_security_analyst.md
-A  src/bugarena/agents/prompts/verifier.md
-M  src/bugarena/agents/registry.py
-M  src/bugarena/inspect/__init__.py
-A  src/bugarena/inspect/site_audit.py
-A  src/bugarena/linking/__init__.py
-A  src/bugarena/linking/sourcemap.py
-A  src/bugarena/tournament/providers/cross_vendor.py
-M  src/bugarena/tournament/providers/dispatcher.py
-A  tests/unit/test_phase5_6_7_site_linking_grok.py
+M  src/bugarena/reporting/__init__.py
+A  src/bugarena/reporting/v2_report.py
+A  src/bugarena/verify/__init__.py
+A  src/bugarena/verify/pack.py
+A  tests/unit/test_phase8_9_report_verify.py
 ```
 
 ## How This Report Stays Updated
