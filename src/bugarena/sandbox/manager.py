@@ -1,7 +1,10 @@
 """Sandbox workspace lifecycle management and patch application."""
 
+import os
 import re
 import shutil
+import stat
+import sys
 import tempfile
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -26,14 +29,18 @@ class EphemeralSandboxManager:
         """
         temp_dir = Path(tempfile.mkdtemp(prefix="bugarena_sandbox_")).resolve()
         try:
-            # Copy base repo files into temp_dir, strictly ignoring secrets and cache dirs
+            # Copy base repo files into temp_dir, strictly ignoring secrets, caches, and external symlinks
             def ignore_patterns(path: str, names: list[str]) -> set[str]:
                 ignored = {
                     ".git",
                     ".venv",
+                    "venv",
                     "__pycache__",
                     ".pytest_cache",
                     ".ruff_cache",
+                    ".mypy_cache",
+                    ".tox",
+                    ".nox",
                     "node_modules",
                     ".env",
                     ".env.local",
@@ -41,23 +48,45 @@ class EphemeralSandboxManager:
                     ".aws",
                     ".ssh",
                 }
-                return {
-                    name
-                    for name in names
-                    if name in ignored
-                    or name.startswith(".env")
-                    or name.endswith((".pyc", ".pyo"))
-                }
+                base_dir = Path(path)
+                skipped: set[str] = set()
+                for name in names:
+                    if (
+                        name in ignored
+                        or name.startswith((".env", "id_rsa", "id_ed25519"))
+                        or name.endswith((".pyc", ".pyo", ".key", ".pem", ".p12", ".pfx"))
+                    ):
+                        skipped.add(name)
+                        continue
+                    candidate = base_dir / name
+                    if candidate.is_symlink():
+                        try:
+                            target = candidate.resolve(strict=True)
+                            target.relative_to(self.base_repo_path)
+                        except (OSError, ValueError):
+                            skipped.add(name)
+                return skipped
 
             shutil.copytree(
                 self.base_repo_path,
                 temp_dir,
                 dirs_exist_ok=True,
+                symlinks=True,
                 ignore=ignore_patterns,
             )
             yield temp_dir
         finally:
-            shutil.rmtree(temp_dir, ignore_errors=True)
+            def _handle_remove_readonly(func, path, _exc):
+                try:
+                    os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+                    func(path)
+                except OSError:
+                    pass
+
+            if sys.version_info >= (3, 12):
+                shutil.rmtree(temp_dir, onexc=_handle_remove_readonly)
+            else:
+                shutil.rmtree(temp_dir, onerror=_handle_remove_readonly)
 
     @staticmethod
     def _clean_diff_path(raw_header_rest: str, prefix: str) -> str:
