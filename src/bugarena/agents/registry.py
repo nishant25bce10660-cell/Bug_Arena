@@ -26,6 +26,19 @@ AGENT_TOOL_MAP: dict[str, tuple[str, ...]] = {
     "fix-author-contract": ("pytest_run",),
     "fix-author-architectural": ("pytest_run",),
     "fix-reviewer": ("pytest_run", "probe_run"),
+    # BugArena v2 multi-browser site audit & truth roles
+    "console-analyst": ("cdp.console", "vault"),
+    "network-analyst": ("cdp.network", "vault"),
+    "dom-a11y-analyst": ("cdp.elements", "vault"),
+    "storage-security-analyst": ("cdp.application", "cdp.security", "vault"),
+    "performance-memory-analyst": ("cdp.performance", "cdp.memory", "vault"),
+    "js-source-analyst": ("cdp.sources", "vault"),
+    "responsive-analyst": ("cdp.sensors", "cdp.rendering", "vault"),
+    "cross-browser-diff-analyst": ("cdp.diff", "vault"),
+    "report-writer": ("vault", "ledger"),
+    "verifier": ("cdp.replay", "probe_run", "vault"),
+    "honesty-auditor": ("ledger", "vault", "transcript"),
+    "merge-analyst": ("ast_scan", "merge_sandbox"),
 }
 
 _PROMPT_FILENAME_OVERRIDES: dict[str, str] = {
@@ -45,6 +58,17 @@ SWEEP_ROLES: tuple[str, ...] = (
     "pr-test-analyzer",
     "comment-analyzer",
     "architect",
+)
+
+SITE_ANALYST_ROLES: tuple[str, ...] = (
+    "console-analyst",
+    "network-analyst",
+    "dom-a11y-analyst",
+    "storage-security-analyst",
+    "performance-memory-analyst",
+    "js-source-analyst",
+    "responsive-analyst",
+    "cross-browser-diff-analyst",
 )
 
 

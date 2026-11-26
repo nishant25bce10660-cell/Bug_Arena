@@ -218,6 +218,8 @@ class MultiModelDispatcher:
             return await self._call_ollama(model, system_msg, prompt, timeout_seconds=timeout_seconds)
         if "gemini" in m_low or "gemma" in m_low:
             return await self._call_gemini(model, system_msg, prompt, timeout_seconds=timeout_seconds)
+        if "grok" in m_low or m_low.startswith("xai/"):
+            return await self._call_grok(model, system_msg, prompt, timeout_seconds=timeout_seconds)
         if "deepseek" in m_low:
             return await self._call_deepseek(model, system_msg, prompt, timeout_seconds=timeout_seconds)
         if "groq" in m_low or "llama" in m_low or "qwen" in m_low:
@@ -379,6 +381,40 @@ class MultiModelDispatcher:
                 return extract_diff_and_explanation(text)
         except (httpx.HTTPError, KeyError, IndexError, ValueError, TypeError) as exc:
             return "", f"Groq API error: {exc}"
+
+    async def _call_grok(
+        self, model: str, system: str, user_prompt: str, timeout_seconds: float | None = None
+    ) -> tuple[str, str]:
+        api_key = os.environ.get("XAI_API_KEY")
+        if not api_key:
+            return "", "Missing XAI_API_KEY environment variable"
+
+        clean_model = model.removeprefix("xai/")
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": clean_model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": 0.2,
+        }
+        try:
+            async with httpx.AsyncClient(
+                timeout=timeout_seconds if timeout_seconds is not None else self.timeout_seconds
+            ) as client:
+                resp = await client.post(
+                    "https://api.x.ai/v1/chat/completions", headers=headers, json=payload
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                text = data["choices"][0]["message"].get("content") or ""
+                return extract_diff_and_explanation(text)
+        except (httpx.HTTPError, KeyError, IndexError, ValueError, TypeError) as exc:
+            return "", f"Grok API error: {exc}"
 
     async def _call_ollama(
         self, model: str, system: str, user_prompt: str, timeout_seconds: float | None = None

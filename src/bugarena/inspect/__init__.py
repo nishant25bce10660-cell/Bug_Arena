@@ -6,11 +6,13 @@ from bugarena.inspect.runner import (
     collect_cross_browser_diff,
     run_full_site_inspection,
 )
+from bugarena.inspect.site_audit import SiteAuditCoordinator
 
 __all__ = [
     "ALL_PANELS",
     "InspectCoverageMatrix",
     "PanelCoverage",
+    "SiteAuditCoordinator",
     "capture_screenshots",
     "collect_cross_browser_diff",
     "run_full_site_inspection",

@@ -1,9 +1,9 @@
 # BugArena MCP — Project & Audit Report
 
-- **Generated (UTC):** `2026-11-26T11:34:20+00:00`
+- **Generated (UTC):** `2026-11-26T11:38:11+00:00`
 - **Repository:** `MCP server`
-- **Branch / HEAD:** `upgrade/bugarena-agents` @ `c3a81bd`
-- **Tracked Files:** `158` across `20` audited areas
+- **Branch / HEAD:** `upgrade/bugarena-agents` @ `a4ef4b1`
+- **Tracked Files:** `175` across `21` audited areas
 - **Auto-Update Trigger:** `.githooks/pre-commit` + `scripts/update_project_report.py` + `AGENTS.md`
 
 ## Audit Verdict
@@ -17,8 +17,8 @@
 | Check | Result | Details |
 | :--- | :--- | :--- |
 | `ruff check src tests scripts` | **PASS (0 issues)** | `All checks passed!` |
-| `pytest -q -m "not slow and not browser"` | **PASS (124 passed, 4 deselected in 15.72s)** | `Isolated unit + regression suites` |
-| `LoopOperator` Read-Only Audit | **PASS** | `20 areas, 0 open confirmed` |
+| `pytest -q -m "not slow and not browser"` | **PASS (128 passed, 4 deselected in 16.82s)** | `Isolated unit + regression suites` |
+| `LoopOperator` Read-Only Audit | **PASS** | `21 areas, 0 open confirmed` |
 
 ## MCP Tools
 Total registered tools: **13**
@@ -42,24 +42,25 @@ Total registered tools: **13**
 ## Coverage Matrix
 | Area | Files | Static Read | Dynamic / Tested | Findings |
 | :--- | :---: | :---: | :---: | :--- |
-| `agents` | 18 | YES | YES | - |
+| `agents` | 30 | YES | YES | - |
 | `audit` | 12 | YES | YES | - |
 | `browser` | 5 | YES | YES | - |
 | `config` | 1 | YES | YES | - |
 | `discovery` | 4 | YES | YES | - |
 | `docs` | 17 | YES | YES | - |
 | `evaluation` | 4 | YES | YES | - |
-| `inspect` | 4 | YES | YES | - |
+| `inspect` | 5 | YES | YES | - |
+| `linking` | 2 | YES | YES | - |
 | `models` | 6 | YES | YES | - |
 | `packaging` | 4 | YES | YES | - |
 | `personas` | 2 | YES | YES | - |
-| `providers` | 2 | YES | YES | - |
+| `providers` | 3 | YES | YES | - |
 | `reporting` | 2 | YES | YES | - |
 | `sandbox` | 4 | YES | YES | - |
 | `scripts` | 3 | YES | YES | - |
 | `server` | 1 | YES | YES | - |
 | `synthesizer` | 3 | YES | YES | - |
-| `tests` | 58 | YES | YES | - |
+| `tests` | 59 | YES | YES | - |
 | `tournament` | 3 | YES | YES | - |
 | `truth` | 5 | YES | YES | - |
 
@@ -67,6 +68,7 @@ Total registered tools: **13**
 No open audit findings detected in the current codebase.
 
 ## Recent Changes
+- `a4ef4b1 feat(inspect): add 14 DevTools CDP collectors, coverage_matrix.md, and planted-bug fixture site`
 - `c3a81bd feat(browser): add Chromium discovery, RFC 6455 CDP client, isolated [mcp_<browser>] cursors, and access gate`
 - `977b8f2 feat(truth): add EvidenceVault hash chain, ClaimLedger, CitationChecker, Scoreboard, and TranscriptLogger`
 - `3f51417 docs(phase1): add v2 PLAN, ARCHITECTURE, THREAT_MODEL, REQUIREMENTS_TRACE, and DEVIATIONS`
@@ -78,21 +80,30 @@ No open audit findings detected in the current codebase.
 - `4cf3bdb fix(ECC-020): escape markdown tables, use adaptive fences, show disqualification, frame prompts`
 - `dec8234 fix(ECC-040): sync README and SKILL docs with MCP tools, scoring, and portable config`
 - `9c1dfde fix(ECC-039): replace tautological security assertion and test all 5 providers with MockTransport`
-- `00dec51 fix(ECC-043): ignore .env.*, reports, caches, .bugarena and comment .env.example blanks`
 
 ## Working Tree Snapshot (`git status --short`)
 ```text
-M  src/bugarena/browser/cursor.py
-A  src/bugarena/inspect/__init__.py
-A  src/bugarena/inspect/collectors.py
-A  src/bugarena/inspect/matrix.py
-A  src/bugarena/inspect/runner.py
-A  tests/fixtures/site_bugs/app.js
-A  tests/fixtures/site_bugs/app.js.map
-A  tests/fixtures/site_bugs/fixture_truth.json
-A  tests/fixtures/site_bugs/index.html
-A  tests/fixtures/site_bugs/server.py
-A  tests/unit/test_inspect_engine.py
+M  src/bugarena/agents/__init__.py
+A  src/bugarena/agents/prompts/console_analyst.md
+A  src/bugarena/agents/prompts/cross_browser_diff_analyst.md
+A  src/bugarena/agents/prompts/dom_a11y_analyst.md
+A  src/bugarena/agents/prompts/honesty_auditor.md
+A  src/bugarena/agents/prompts/js_source_analyst.md
+A  src/bugarena/agents/prompts/merge_analyst.md
+A  src/bugarena/agents/prompts/network_analyst.md
+A  src/bugarena/agents/prompts/performance_memory_analyst.md
+A  src/bugarena/agents/prompts/report_writer.md
+A  src/bugarena/agents/prompts/responsive_analyst.md
+A  src/bugarena/agents/prompts/storage_security_analyst.md
+A  src/bugarena/agents/prompts/verifier.md
+M  src/bugarena/agents/registry.py
+M  src/bugarena/inspect/__init__.py
+A  src/bugarena/inspect/site_audit.py
+A  src/bugarena/linking/__init__.py
+A  src/bugarena/linking/sourcemap.py
+A  src/bugarena/tournament/providers/cross_vendor.py
+M  src/bugarena/tournament/providers/dispatcher.py
+A  tests/unit/test_phase5_6_7_site_linking_grok.py
 ```
 
 ## How This Report Stays Updated
