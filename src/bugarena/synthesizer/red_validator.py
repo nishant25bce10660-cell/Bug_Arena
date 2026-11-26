@@ -13,6 +13,10 @@ class ReproductionFalsePositiveError(Exception):
     """Raised when a candidate reproduction test passes on the untouched buggy codebase."""
 
 
+class ReproductionInfrastructureError(ReproductionFalsePositiveError):
+    """Raised when a reproduction test errors out (exit code 2/3/4/5) or times out."""
+
+
 def validate_red_baseline(
     base_repo_path: Path | str,
     test_rel_path: str,
@@ -23,7 +27,8 @@ def validate_red_baseline(
     """
     Validate that a synthesized reproduction test fails on the original codebase (Red-First guarantee).
 
-    If the test passes on the original codebase, it is a false positive and rejected.
+    Accepts ONLY pytest exit code 1 without timeout. Raises ReproductionFalsePositiveError for exit 0,
+    and ReproductionInfrastructureError for exit codes 2/3/4/5 or timeouts.
     """
     repo = Path(base_repo_path).resolve()
     py_exec = python_executable or sys.executable
@@ -44,10 +49,19 @@ def validate_red_baseline(
             env_override={"PYTHONPATH": "."},
         )
 
+        if outcome.timed_out:
+            raise ReproductionInfrastructureError(
+                f"Candidate reproduction test '{test_rel_path}' timed out after {timeout_seconds}s."
+            )
         if outcome.exit_code == 0:
             raise ReproductionFalsePositiveError(
                 f"Candidate reproduction test '{test_rel_path}' passed on unpatched codebase. "
                 "A valid reproduction test must fail to prove defect existence."
+            )
+        if outcome.exit_code != 1:
+            raise ReproductionInfrastructureError(
+                f"Candidate reproduction test '{test_rel_path}' aborted with pytest exit code "
+                f"{outcome.exit_code} (expected 1): {(outcome.stderr or outcome.stdout)[:300]}"
             )
 
         return ReproTestSpec(
