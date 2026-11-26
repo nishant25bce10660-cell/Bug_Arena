@@ -69,11 +69,14 @@ class SiteAuditCoordinator:
         *,
         headless: bool = True,
         panels: str | list[str] = "all",
+        target_url: str | None = None,
     ) -> dict[str, Any]:
         """Launch isolated [mcp_<browser>] cursors for confirmed session, inspect in parallel, verify claims."""
         sess = self.sessions.get_session(run_id)
         run_dir = Path(sess["run_dir"])
         policy: AccessPolicy = sess["policy"]
+        effective_url = target_url or policy.site_url
+        policy.assert_action_allowed("navigate", target_url=effective_url)
         vault = EvidenceVault(run_dir)
         scoreboard = AgentScoreboard(run_dir)
         ledger = ClaimLedger(run_dir, vault=vault, scoreboard=scoreboard)
@@ -107,7 +110,7 @@ class SiteAuditCoordinator:
                 async with sem:
                     res = await run_full_site_inspection(
                         cursor=cur,
-                        url=policy.site_url,
+                        url=effective_url,
                         policy=policy,
                         vault=vault,
                         transcript=transcript,

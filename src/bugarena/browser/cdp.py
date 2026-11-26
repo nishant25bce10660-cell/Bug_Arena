@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 import httpx
 
 _WS_MAGIC = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+_MAX_FRAME_BYTES = 32 * 1024 * 1024
 
 
 class CDPError(RuntimeError):
@@ -25,6 +26,8 @@ class CDPClient:
     """Async Chrome DevTools Protocol client speaking RFC 6455 WebSocket over loopback TCP."""
 
     def __init__(self, ws_url: str):
+        if any(ch in ws_url for ch in ("\r", "\n", "\x00")):
+            raise ValueError(f"CDPClient rejects control characters in ws_url: {ws_url!r}")
         parsed = urlparse(ws_url)
         if parsed.scheme != "ws" or parsed.hostname not in ("127.0.0.1", "localhost"):
             raise ValueError(f"CDPClient permits loopback ws:// only, got {ws_url!r}")
@@ -45,7 +48,7 @@ class CDPClient:
     @classmethod
     async def from_port(cls, port: int, *, prefer_page_target: bool = True) -> CDPClient:
         """Discover WebSocket debugger URL from 127.0.0.1:<port> and connect."""
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=5.0, trust_env=False) as client:
             if prefer_page_target:
                 resp = await client.get(f"http://127.0.0.1:{port}/json/list")
                 resp.raise_for_status()
@@ -53,46 +56,61 @@ class CDPClient:
                 for t in targets:
                     if t.get("type") == "page" and t.get("webSocketDebuggerUrl"):
                         inst = cls(t["webSocketDebuggerUrl"])
-                        await inst.connect()
+                        try:
+                            await inst.connect()
+                        except BaseException:
+                            await inst.close()
+                            raise
                         return inst
             ver = await client.get(f"http://127.0.0.1:{port}/json/version")
             ver.raise_for_status()
             ws_url = ver.json()["webSocketDebuggerUrl"]
             inst = cls(ws_url)
-            await inst.connect()
+            try:
+                await inst.connect()
+            except BaseException:
+                await inst.close()
+                raise
             return inst
 
     async def connect(self) -> None:
-        self._reader, self._writer = await asyncio.open_connection(self.host, self.port, limit=16 * 1024 * 1024)
-        key = base64.b64encode(os.urandom(16)).decode("ascii")
-        handshake = (
-            f"GET {self.path} HTTP/1.1\r\n"
-            f"Host: {self.host}:{self.port}\r\n"
-            "Upgrade: websocket\r\n"
-            "Connection: Upgrade\r\n"
-            f"Sec-WebSocket-Key: {key}\r\n"
-            "Sec-WebSocket-Version: 13\r\n\r\n"
+        self._reader, self._writer = await asyncio.wait_for(
+            asyncio.open_connection(self.host, self.port, limit=16 * 1024 * 1024),
+            timeout=5.0,
         )
-        self._writer.write(handshake.encode("ascii"))
-        await self._writer.drain()
+        try:
+            key = base64.b64encode(os.urandom(16)).decode("ascii")
+            handshake = (
+                f"GET {self.path} HTTP/1.1\r\n"
+                f"Host: {self.host}:{self.port}\r\n"
+                "Upgrade: websocket\r\n"
+                "Connection: Upgrade\r\n"
+                f"Sec-WebSocket-Key: {key}\r\n"
+                "Sec-WebSocket-Version: 13\r\n\r\n"
+            )
+            self._writer.write(handshake.encode("ascii"))
+            await self._writer.drain()
 
-        status_line = await asyncio.wait_for(self._reader.readline(), timeout=5.0)
-        if b"101" not in status_line:
-            raise CDPError(f"WebSocket handshake failed: {status_line!r}")
+            status_line = await asyncio.wait_for(self._reader.readline(), timeout=5.0)
+            if b"101" not in status_line:
+                raise CDPError(f"WebSocket handshake failed: {status_line!r}")
 
-        accept_expected = base64.b64encode(hashlib.sha1(key.encode("ascii") + _WS_MAGIC).digest()).decode("ascii")
-        headers: dict[str, str] = {}
-        while True:
-            line = await asyncio.wait_for(self._reader.readline(), timeout=5.0)
-            if line in (b"\r\n", b"\n", b""):
-                break
-            if b":" in line:
-                k, v = line.decode("latin1").split(":", 1)
-                headers[k.strip().lower()] = v.strip()
-        if headers.get("sec-websocket-accept") != accept_expected:
-            raise CDPError("Invalid Sec-WebSocket-Accept from CDP endpoint.")
+            accept_expected = base64.b64encode(hashlib.sha1(key.encode("ascii") + _WS_MAGIC).digest()).decode("ascii")
+            headers: dict[str, str] = {}
+            while True:
+                line = await asyncio.wait_for(self._reader.readline(), timeout=5.0)
+                if line in (b"\r\n", b"\n", b""):
+                    break
+                if b":" in line:
+                    k, v = line.decode("latin1").split(":", 1)
+                    headers[k.strip().lower()] = v.strip()
+            if headers.get("sec-websocket-accept") != accept_expected:
+                raise CDPError("Invalid Sec-WebSocket-Accept from CDP endpoint.")
 
-        self._recv_task = asyncio.create_task(self._recv_loop())
+            self._recv_task = asyncio.create_task(self._recv_loop())
+        except BaseException:
+            await self.close()
+            raise
 
     async def _send_frame(self, opcode: int, payload: bytes) -> None:
         if not self._writer:
@@ -124,6 +142,8 @@ class CDPClient:
             (length,) = struct.unpack("!H", await self._reader.readexactly(2))
         elif length == 127:
             (length,) = struct.unpack("!Q", await self._reader.readexactly(8))
+        if length > _MAX_FRAME_BYTES:
+            raise CDPError(f"WebSocket frame too large ({length} > {_MAX_FRAME_BYTES})")
         mask = await self._reader.readexactly(4) if masked else b""
         data = await self._reader.readexactly(length)
         if masked:
@@ -131,6 +151,7 @@ class CDPClient:
         if not fin:
             # Accumulate continuation frames
             chunks = [data]
+            total = len(data)
             while True:
                 nb1, nb2 = await self._reader.readexactly(2)
                 nfin = (nb1 & 0x80) != 0
@@ -139,6 +160,9 @@ class CDPClient:
                     (nlen,) = struct.unpack("!H", await self._reader.readexactly(2))
                 elif nlen == 127:
                     (nlen,) = struct.unpack("!Q", await self._reader.readexactly(8))
+                total += nlen
+                if total > _MAX_FRAME_BYTES:
+                    raise CDPError(f"Fragmented WebSocket frame exceeds {_MAX_FRAME_BYTES}")
                 nmask = await self._reader.readexactly(4) if (nb2 & 0x80) else b""
                 ndata = await self._reader.readexactly(nlen)
                 if nmask:
@@ -170,8 +194,12 @@ class CDPClient:
                             fut.set_result(msg.get("result", {}))
                 elif "method" in msg:
                     self.events[msg["method"]].append(msg.get("params", {}))
-        except (asyncio.CancelledError, asyncio.IncompleteReadError, OSError, ValueError):
-            for fut in self._pending.values():
+        except asyncio.CancelledError:
+            raise
+        except (asyncio.IncompleteReadError, OSError, ValueError, CDPError):
+            pass
+        finally:
+            for fut in list(self._pending.values()):
                 if not fut.done():
                     fut.set_exception(CDPError("CDP WebSocket disconnected"))
             self._pending.clear()
@@ -188,9 +216,12 @@ class CDPClient:
         loop = asyncio.get_running_loop()
         fut: asyncio.Future[dict[str, Any]] = loop.create_future()
         self._pending[cmd_id] = fut
-        payload = json.dumps({"id": cmd_id, "method": method, "params": params or {}}).encode("utf-8")
-        await self._send_frame(0x1, payload)
-        return await asyncio.wait_for(fut, timeout=timeout)
+        try:
+            payload = json.dumps({"id": cmd_id, "method": method, "params": params or {}}).encode("utf-8")
+            await self._send_frame(0x1, payload)
+            return await asyncio.wait_for(fut, timeout=timeout)
+        finally:
+            self._pending.pop(cmd_id, None)
 
     async def close(self) -> None:
         if self._recv_task and not self._recv_task.done():

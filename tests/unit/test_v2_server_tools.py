@@ -57,7 +57,7 @@ async def test_v2_mcp_tools_project_only_and_merge_dry_run(tmp_path: Path):
     with pytest.raises(PermissionError):
         await site_audit_start("https://example.com", conf["run_id"], "wrong-token")
 
-    cursors = await browser_cursor_list(conf["run_id"])
+    cursors = await browser_cursor_list(conf["run_id"], session_token=conf["session_token"])
     assert cursors["run_id"] == conf["run_id"]
 
     # Project-only audit without any browser works cleanly
@@ -92,16 +92,17 @@ async def test_full_v2_site_audit_and_verify_pack_across_installed_browsers(tmp_
             "output_dir": str(tmp_path / "bugarena_reports"),
         })
         rid = conf["run_id"]
-        audit_res = await site_audit_start(base_url, rid, conf["session_token"], headless=True)
+        tok = conf["session_token"]
+        audit_res = await site_audit_start(base_url, rid, tok, headless=True)
         assert audit_res["confirmed_count"] >= 10
-        st = await site_audit_status(rid)
+        st = await site_audit_status(rid, session_token=tok)
         assert st["vault_valid"] is True
 
-        rep = await report_build(rid, formats=["md", "pdf"])
+        rep = await report_build(rid, formats=["md", "pdf"], session_token=tok)
         assert Path(rep["report_md"]).is_file()
         assert Path(rep["report_pdf"]).read_bytes().startswith(b"%PDF-")
 
-        vp = await verify_pack_build(rid)
+        vp = await verify_pack_build(rid, session_token=tok)
         assert Path(vp["verify_script"]).is_file()
         assert Path(vp["verify_prompt"]).is_file()
 
@@ -109,5 +110,5 @@ async def test_full_v2_site_audit_and_verify_pack_across_installed_browsers(tmp_
         assert len(sb["agents"]) >= 1
 
         # Claim retraction preserves log and adjusts score cleanly
-        ret = await claim_retract(rid, "F-0001", "Retraction smoke check", agent_name="console-analyst")
+        ret = await claim_retract(rid, "F-0001", "Retraction smoke check", agent_name="console-analyst", session_token=tok)
         assert ret["status"] == "RETRACTED"

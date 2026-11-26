@@ -122,23 +122,22 @@ class LoopOperator:
         return target
 
     def _find_run_dir(self, run_id: str, repo_hint: Path | str | None = None) -> Path:
+        if not run_id or "/" in run_id or "\\" in run_id or ".." in run_id or run_id.startswith("-"):
+            raise ValueError(f"Invalid audit run_id: {run_id!r}")
         if run_id in self._run_dirs and (self._run_dirs[run_id] / "loop_state.json").is_file():
             return self._run_dirs[run_id]
-        candidates: list[Path] = []
+        from bugarena.sandbox.security import validate_safe_path
+
+        roots: list[Path] = []
         if self.state_root:
-            candidates.append(self.state_root / "runs" / run_id)
+            roots.append(self.state_root)
         if repo_hint:
-            candidates.append(Path(repo_hint).resolve() / ".bugarena" / "runs" / run_id)
-        candidates.append(Path(".bugarena").resolve() / "runs" / run_id)
-        for cand in candidates:
+            roots.append(Path(repo_hint).resolve() / ".bugarena")
+        roots.append(Path(".bugarena").resolve())
+        for root in roots:
+            cand = validate_safe_path(root, f"runs/{run_id}")
             if (cand / "loop_state.json").is_file():
                 return cand
-        # Scan .bugarena/runs under cwd just in case
-        cwd_runs = Path(".bugarena/runs")
-        if cwd_runs.is_dir():
-            target = cwd_runs / run_id
-            if (target / "loop_state.json").is_file():
-                return target
         raise FileNotFoundError(f"Audit run_id '{run_id}' not found.")
 
     def load_run(

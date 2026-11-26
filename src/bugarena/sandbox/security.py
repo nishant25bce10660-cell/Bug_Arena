@@ -210,8 +210,10 @@ def scrub_sensitive_data(
     scrubbed = re.sub(r"hf_[A-Za-z0-9]{16,}", "[REDACTED_HF_TOKEN]", scrubbed)
     scrubbed = re.sub(r"sk-[A-Za-z0-9_-]{20,}", "[REDACTED_API_KEY]", scrubbed)
     scrubbed = re.sub(r"AIza[0-9A-Za-z_-]{16,}", "[REDACTED_GEMINI_KEY]", scrubbed)
+    scrubbed = re.sub(r"xai-[A-Za-z0-9_-]{16,}", "[REDACTED_XAI_KEY]", scrubbed)
     scrubbed = re.sub(r"gsk_[A-Za-z0-9]{48,}", "[REDACTED_GROQ_KEY]", scrubbed)
     scrubbed = re.sub(r"AKIA[0-9A-Z]{16}", "[REDACTED_AWS_KEY]", scrubbed)
+    scrubbed = re.sub(r"eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+", "[REDACTED_JWT]", scrubbed)
     scrubbed = re.sub(r"Bearer\s+[A-Za-z0-9_\-\.~+/]+=*", "Bearer [REDACTED_TOKEN]", scrubbed, flags=re.IGNORECASE)
 
     # Redact remaining absolute home paths (both '\' and '/' on Windows/POSIX)

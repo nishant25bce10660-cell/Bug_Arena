@@ -708,8 +708,13 @@ _PRESERVED_PATH_KEYS = frozenset({
 
 
 def _scrub_payload(obj: Any, base_dir: Path | str | None = None) -> Any:
+    from bugarena.truth.vault import scrub_evidence_text
+
     if isinstance(obj, str):
-        return scrub_sensitive_data(obj, base_dir=base_dir)
+        scrubbed, _ = scrub_evidence_text(obj, base_dir=base_dir)
+        return scrubbed
+    if isinstance(obj, tuple):
+        return [_scrub_payload(item, base_dir=base_dir) for item in obj]
     if isinstance(obj, list):
         return [_scrub_payload(item, base_dir=base_dir) for item in obj]
     if isinstance(obj, dict):
@@ -718,7 +723,18 @@ def _scrub_payload(obj: Any, base_dir: Path | str | None = None) -> Any:
             for k, v in obj.items()
         }
     return obj
-    return obj
+
+
+def _authorize_v2_tool(run_id: str, tool_name: str, session_token: str) -> dict[str, Any]:
+    import secrets
+
+    sess = _SITE_COORDINATOR.sessions.get_session(run_id)
+    if not session_token or not secrets.compare_digest(session_token, sess["session_token"]):
+        raise PermissionError("Invalid session_token; run session_confirm first.")
+    active_tools = sess.get("active_tools")
+    if active_tools and tool_name not in active_tools:
+        raise PermissionError(f"Tool '{tool_name}' is not permitted by session active_tools / tools_denied.")
+    return sess
 
 
 @mcp.tool()
@@ -840,11 +856,9 @@ async def site_audit_start(
     panels: str | list[str] = "all",
 ) -> dict[str, Any]:
     """Begin multi-browser DevTools site audit strictly after session_confirm authorization."""
-    sess = _SITE_COORDINATOR.sessions.get_session(run_id)
-    if session_token != sess["session_token"]:
-        raise PermissionError("Invalid session_token; run session_confirm first.")
+    sess = _authorize_v2_tool(run_id, "site_audit_start", session_token)
     sess["policy"].assert_action_allowed("navigate", target_url=url)
-    res = await _SITE_COORDINATOR.start_and_run_round(run_id, headless=headless, panels=panels)
+    res = await _SITE_COORDINATOR.start_and_run_round(run_id, headless=headless, panels=panels, target_url=url)
     return _scrub_payload(res)
 
 
@@ -853,22 +867,26 @@ async def site_audit_round(
     run_id: str,
     headless: bool = True,
     panels: str | list[str] = "all",
+    session_token: str = "",
 ) -> dict[str, Any]:
     """Execute one multi-browser site audit round on an existing confirmed session."""
+    _authorize_v2_tool(run_id, "site_audit_round", session_token)
     res = await _SITE_COORDINATOR.start_and_run_round(run_id, headless=headless, panels=panels)
     return _scrub_payload(res)
 
 
 @mcp.tool(description="Return confirmed/retracted/rejected claim counts, vault integrity, and details for a site_audit run_id.")
-async def site_audit_status(run_id: str) -> dict[str, Any]:
+async def site_audit_status(run_id: str, session_token: str = "") -> dict[str, Any]:
     """Inspect status and EvidenceVault chain validity for a site audit run."""
+    _authorize_v2_tool(run_id, "site_audit_status", session_token)
     res = await asyncio.to_thread(_SITE_COORDINATOR.status, run_id)
     return _scrub_payload(res)
 
 
 @mcp.tool(description="List live or registered [mcp_<browser>] cursor workers, PIDs, ports, and states for a run_id.")
-async def browser_cursor_list(run_id: str) -> dict[str, Any]:
+async def browser_cursor_list(run_id: str, session_token: str = "") -> dict[str, Any]:
     """List [mcp_<browser>] cursor instances belonging to run_id."""
+    _authorize_v2_tool(run_id, "browser_cursor_list", session_token)
     res = await asyncio.to_thread(_SITE_COORDINATOR.sessions.browser_cursor_list, run_id)
     return _scrub_payload(res)
 
@@ -879,8 +897,10 @@ async def inspect_panel(
     browser: str,
     panel: str,
     args: dict[str, Any] | None = None,
+    session_token: str = "",
 ) -> dict[str, Any]:
     """Inspect one specific DevTools panel on a granted browser cursor."""
+    _authorize_v2_tool(run_id, "inspect_panel", session_token)
     res = await _SITE_COORDINATOR.inspect_panel(run_id, browser, panel, args)
     return _scrub_payload(res)
 
@@ -890,11 +910,17 @@ async def project_audit_start(
     project_path: str,
     site_run_id: str = "",
     mode: str = "read_only",
+    session_token: str = "",
 ) -> dict[str, Any]:
     """Audit a local project and optionally link findings to an existing site run via source maps."""
+    if mode != "read_only":
+        raise PermissionError("project_audit_start enforces read_only mode only.")
     if project_path.startswith("-"):
         raise ValueError("Invalid project_path")
-    started = await asyncio.to_thread(_LOOP_OPERATOR.start, project_path, mode=mode, max_rounds=2)
+    sess: dict[str, Any] | None = None
+    if site_run_id:
+        sess = _authorize_v2_tool(site_run_id, "project_audit_start", session_token)
+    started = await asyncio.to_thread(_LOOP_OPERATOR.start, project_path, mode="read_only", max_rounds=2)
     rnd = await _LOOP_OPERATOR.run_round(started["run_id"], auto_generate=False)
     _rdir, _st, ledger, _cov = await asyncio.to_thread(_LOOP_OPERATOR.load_run, started["run_id"])
     proj_findings = [
@@ -902,17 +928,22 @@ async def project_audit_start(
         for f in ledger.findings
     ]
     linked: list[dict[str, Any]] = []
-    if site_run_id:
-        sess = _SITE_COORDINATOR.sessions.get_session(site_run_id)
+    if site_run_id and sess is not None:
         rdir = Path(sess["run_dir"])
         v = EvidenceVault(rdir)
         sb = AgentScoreboard(rdir)
         cl = ClaimLedger(rdir, vault=v, scoreboard=sb)
         site_list = [c.model_dump() for c in cl.claims]
+        smaps_path = rdir / "source_maps.json"
+        source_maps: dict[str, dict[str, Any]] = {}
+        if smaps_path.is_file():
+            import json
+
+            source_maps = json.loads(smaps_path.read_text(encoding="utf-8"))
         linked = link_site_and_project_findings(
             site_findings=site_list,
             project_findings=proj_findings,
-            source_maps={},
+            source_maps=source_maps,
             project_path=project_path,
         )
     return _scrub_payload(
@@ -931,9 +962,10 @@ async def report_build(
     run_id: str,
     formats: list[str] | None = None,
     use_llm_analysis: bool = False,
+    session_token: str = "",
 ) -> dict[str, Any]:
     """Render REPORT.md and REPORT.pdf strictly from verified CONFIRMED findings."""
-    sess = _SITE_COORDINATOR.sessions.get_session(run_id)
+    sess = _authorize_v2_tool(run_id, "report_build", session_token)
     rdir = Path(sess["run_dir"])
     vault = EvidenceVault(rdir)
     sb = AgentScoreboard(rdir)
@@ -952,9 +984,9 @@ async def report_build(
 
 
 @mcp.tool(description="Build standalone verification pack (verify/verify.py stdlib-only, VERIFY_PROMPT.md, claims.json, README.txt) for an audit run folder.")
-async def verify_pack_build(run_id: str) -> dict[str, Any]:
+async def verify_pack_build(run_id: str, session_token: str = "") -> dict[str, Any]:
     """Generate offline verify/ pack and VERIFY_PROMPT.md for independent coding-agent verification."""
-    sess = _SITE_COORDINATOR.sessions.get_session(run_id)
+    sess = _authorize_v2_tool(run_id, "verify_pack_build", session_token)
     res = await asyncio.to_thread(build_verify_pack, Path(sess["run_dir"]))
     return _scrub_payload(res)
 
@@ -965,9 +997,10 @@ async def claim_retract(
     claim_id: str,
     reason: str,
     agent_name: str = "self",
+    session_token: str = "",
 ) -> dict[str, Any]:
     """Retract an inaccurate or uncertain claim without deleting history."""
-    sess = _SITE_COORDINATOR.sessions.get_session(run_id)
+    sess = _authorize_v2_tool(run_id, "claim_retract", session_token)
     rdir = Path(sess["run_dir"])
     vault = EvidenceVault(rdir)
     sb = AgentScoreboard(rdir)
@@ -977,17 +1010,21 @@ async def claim_retract(
 
 
 @mcp.tool(description="Return agent honesty, precision, Brier calibration, self-correction rate, and quarantine status for a run or cumulative scoreboard.")
-async def agent_scoreboard(run_id: str | None = None) -> dict[str, Any]:
+async def agent_scoreboard(run_id: str | None = None, session_token: str = "") -> dict[str, Any]:
     """Return agent reliability scoreboard for run_id or cumulative .bugarena/agent_scores.json."""
     if run_id:
-        sess = _SITE_COORDINATOR.sessions.get_session(run_id)
+        if session_token:
+            sess = _authorize_v2_tool(run_id, "agent_scoreboard", session_token)
+        else:
+            sess = _SITE_COORDINATOR.sessions.get_session(run_id)
         sb = AgentScoreboard(Path(sess["run_dir"]))
-        return {"run_id": run_id, "agents": {k: v.model_dump() for k, v in sb.all_scores().items()}}
+        return _scrub_payload({"run_id": run_id, "agents": {k: v.model_dump() for k, v in sb.all_scores().items()}})
     import json
 
     gpath = Path(".bugarena/agent_scores.json")
     if gpath.is_file():
-        return json.loads(gpath.read_text(encoding="utf-8"))
+        txt = await asyncio.to_thread(gpath.read_text, encoding="utf-8")
+        return _scrub_payload(json.loads(txt))
     return {"agents": {}}
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import secrets
 import uuid
 from datetime import UTC, datetime
@@ -11,6 +12,9 @@ from typing import Any
 
 from bugarena.browser.cursor import AccessPolicy, BrowserCursor
 from bugarena.browser.discovery import discover_browsers
+from bugarena.sandbox.security import validate_safe_path
+
+_VALID_RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 
 QUESTIONNAIRE_ITEMS: tuple[dict[str, Any], ...] = (
     {"id": "site_url", "question": "Target site URL to audit (type or paste URL now)", "required": True},
@@ -68,9 +72,20 @@ class SessionManager:
     ) -> dict[str, Any]:
         """Validate answers, enforce passive mode on 'neither', write scope_and_authorization.md, issue token."""
         policy = AccessPolicy.from_answers(answers)
-        run_id = str(answers.get("run_id") or f"run_{uuid.uuid4().hex[:8]}")
-        out_root = Path(answers.get("output_dir") or self.default_output_root)
-        run_dir = (out_root / run_id).resolve()
+        raw_run_id = answers.get("run_id")
+        if raw_run_id is not None and str(raw_run_id).strip():
+            run_id = str(raw_run_id).strip()
+            if not _VALID_RUN_ID_RE.match(run_id):
+                raise ValueError(f"Invalid run_id {run_id!r}: must match ^[A-Za-z0-9][A-Za-z0-9_-]{{0,63}}$")
+        else:
+            run_id = f"run_{uuid.uuid4().hex[:8]}"
+        if run_id in self._sessions:
+            raise ValueError(f"Session run_id '{run_id}' already exists.")
+
+        out_cfg = answers.get("output_config") if isinstance(answers.get("output_config"), dict) else {}
+        out_root = Path(answers.get("output_dir") or out_cfg.get("output_dir") or self.default_output_root).resolve()
+        out_root.mkdir(parents=True, exist_ok=True)
+        run_dir = validate_safe_path(out_root, run_id)
         run_dir.mkdir(parents=True, exist_ok=True)
 
         profile_mode = str(answers.get("profile_mode", "fresh_isolated"))
@@ -81,15 +96,22 @@ class SessionManager:
                 "default fresh_isolated temporary profiles remain safer."
             )
 
-        tools_allowed = answers.get("tools_allowed", "all")
-        tools_denied = set(answers.get("tools_denied") or [])
+        tool_filters = answers.get("tool_filters") if isinstance(answers.get("tool_filters"), dict) else {}
+        tools_allowed = answers.get("tools_allowed", tool_filters.get("tools_allowed", "all"))
+        raw_denied = answers.get("tools_denied", tool_filters.get("tools_denied", []))
+        tools_denied = {raw_denied} if isinstance(raw_denied, str) else set(raw_denied or [])
         if tools_allowed == "all" or not tools_allowed:
             active_tools = [t for t in all_tool_names if t not in tools_denied]
+        elif isinstance(tools_allowed, str):
+            active_tools = [tools_allowed] if tools_allowed not in tools_denied else []
         else:
             active_tools = [t for t in tools_allowed if t not in tools_denied]
 
         token = secrets.token_urlsafe(24)
-        requested_browsers = [str(b).lower() for b in (answers.get("browsers") or ["chrome"])]
+        raw_browsers = answers.get("browsers") or ["chrome"]
+        requested_browsers = (
+            [raw_browsers.lower()] if isinstance(raw_browsers, str) else [str(b).lower() for b in raw_browsers]
+        )
         overrides = {
             k.removesuffix("_path").lower(): str(v)
             for k, v in answers.items()
