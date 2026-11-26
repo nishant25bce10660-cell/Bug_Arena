@@ -36,5 +36,10 @@ htmlcov/
 
 # Project Temporary
 .env
+.env.*
+!.env.example
+.ruff_cache/
+.bugarena/
+reports/
 workspace_temp/
 tests/repro_temp/

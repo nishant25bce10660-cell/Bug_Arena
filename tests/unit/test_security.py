@@ -1,3 +1,5 @@
+import ast
+
 import pytest
 
 from bugarena.sandbox.security import (
@@ -114,4 +116,15 @@ def test_docstring_injection_sanitization():
     )
     malicious_desc = '"""\nimport os\nos.system("whoami")\n"""'
     test_code = generate_reproduction_test_code(suspect, malicious_desc)
-    assert 'import os\nos.system("whoami")' not in test_code or r'\"\"\"' in test_code
+    tree = ast.parse(test_code)
+    imported_modules = {
+        *(alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names),
+        *(node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module),
+    }
+    assert "os" not in imported_modules
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "system"
+        for node in ast.walk(tree)
+    )

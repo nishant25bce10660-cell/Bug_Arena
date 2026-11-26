@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from bugarena.server import bugarena_autonomous_repair
 
 BUGGY_CALC_CODE = """
@@ -108,3 +110,12 @@ def test_end_to_end_autonomous_repair_flow(tmp_path):
     assert "git apply" in report
     assert "cand_regressive_02" in report
     assert "DISQUALIFIED" in report
+
+    # 4. Verify that an .md report file was generated and saved to disk
+    assert "report_file_path" in result
+    report_file = Path(result["report_file_path"])
+    assert report_file.is_file()
+    saved_md = report_file.read_text(encoding="utf-8")
+    assert "divide(10, 0) raises ZeroDivisionError instead of returning 0.0" in saved_md
+    assert "cand_surgical_01" in saved_md
+    assert "Winning Champion Patch" in saved_md

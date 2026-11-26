@@ -1,5 +1,6 @@
 """Live API connectivity and key verification script for BugArena."""
 
+import argparse
 import asyncio
 import os
 import sys
@@ -8,13 +9,11 @@ from pathlib import Path
 
 import httpx
 
-# Add src to sys.path and load .env
+# Add src to sys.path
 root_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(root_dir / "src"))
 
 from bugarena.config import load_env_file
-
-load_env_file()
 
 
 async def check_gemini() -> dict:
@@ -155,29 +154,81 @@ async def check_ollama() -> dict:
         async with httpx.AsyncClient(timeout=2.0) as client:
             resp = await client.get(url)
             if resp.status_code == 200:
-                models = [m.get("name") for m in resp.json().get("models", [])]
+                try:
+                    data = resp.json()
+                except ValueError:
+                    return {
+                        "provider": "Local Ollama",
+                        "status": "ERROR",
+                        "code": resp.status_code,
+                        "message": "Invalid JSON response from localhost:11434.",
+                    }
+                if not isinstance(data, dict):
+                    return {
+                        "provider": "Local Ollama",
+                        "status": "ERROR",
+                        "code": resp.status_code,
+                        "message": "Unexpected payload format from localhost:11434.",
+                    }
+                models = [m.get("name") for m in data.get("models", []) if isinstance(m, dict)]
                 return {
                     "provider": "Local Ollama",
                     "status": "ONLINE",
                     "message": f"Connected. Installed models: {models[:3]}",
                 }
+            return {
+                "provider": "Local Ollama",
+                "status": "ERROR",
+                "code": resp.status_code,
+                "message": f"Unexpected HTTP {resp.status_code}: {resp.text[:120]}",
+            }
     except (httpx.HTTPError, OSError):
         return {"provider": "Local Ollama", "status": "OFFLINE", "message": "Not running on localhost:11434."}
-    return {"provider": "Local Ollama", "status": "OFFLINE", "message": "Not running on localhost:11434."}
 
 
-async def main():
+def _dry_run_results() -> list[dict]:
+    env_checks = [
+        ("Google Gemini", "GEMINI_API_KEY"),
+        ("OpenAI", "OPENAI_API_KEY"),
+        ("DeepSeek", "DEEPSEEK_API_KEY"),
+        ("Groq", "GROQ_API_KEY"),
+    ]
+    results = [
+        {
+            "provider": provider,
+            "status": "DRY_RUN" if os.environ.get(var) else "KEY_NOT_FOUND",
+            "message": f"{var} is {'set' if os.environ.get(var) else 'not set'} (live request skipped).",
+        }
+        for provider, var in env_checks
+    ]
+    results.append(
+        {
+            "provider": "Local Ollama",
+            "status": "DRY_RUN",
+            "message": "Would probe http://localhost:11434/api/tags (live request skipped).",
+        }
+    )
+    return results
+
+
+async def main(dry_run: bool = False, env_file: str | None = None):
+    if env_file:
+        load_env_file(env_file)
+
     print("\n=======================================================")
     print("        BugArena Multi-Agent API Status Check          ")
     print("=======================================================\n")
 
-    results = await asyncio.gather(
-        check_gemini(),
-        check_openai(),
-        check_deepseek(),
-        check_groq(),
-        check_ollama(),
-    )
+    if dry_run:
+        results = _dry_run_results()
+    else:
+        results = await asyncio.gather(
+            check_gemini(),
+            check_openai(),
+            check_deepseek(),
+            check_groq(),
+            check_ollama(),
+        )
 
     for r in results:
         status = r["status"]
@@ -187,6 +238,8 @@ async def main():
 
         if status == "ONLINE":
             print(f" [ONLINE]  {provider}{latency} -> {msg}")
+        elif status == "DRY_RUN":
+            print(f" [DRY_RUN] {provider} -> {msg}")
         elif status == "KEY_NOT_FOUND":
             print(f" [WAITING] {provider} -> {msg}")
         elif status == "OFFLINE":
@@ -194,11 +247,28 @@ async def main():
         else:
             print(f" [ERROR]   {provider} -> {msg}")
 
+    config_hint = Path.home() / ".gemini" / "config" / "mcp_config.json"
     print("\n-------------------------------------------------------")
     print("To activate any provider, add your key to `.env` or:")
-    print("C:\\Users\\nisha\\.gemini\\config\\mcp_config.json")
+    print(str(config_hint))
     print("=======================================================\n")
 
 
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Check BugArena LLM provider connectivity.")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate environment key presence without sending live network requests.",
+    )
+    parser.add_argument(
+        "--env-file",
+        default=None,
+        help="Optional path to a .env file to load before checking.",
+    )
+    return parser.parse_args(argv)
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    args = _parse_args()
+    asyncio.run(main(dry_run=args.dry_run, env_file=args.env_file))
