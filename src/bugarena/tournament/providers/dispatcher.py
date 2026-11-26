@@ -49,6 +49,8 @@ def get_recommended_model_for_persona(persona: PersonaType) -> str:
             return "gemma-4-26b-a4b-it"
         if has_groq:
             return "qwen/qwen3.8-27b"
+        if has_deepseek:
+            return "deepseek-chat"
         if has_openai:
             return "gpt-4o"
         return "gemma-4-26b-a4b-it"
@@ -193,6 +195,27 @@ class MultiModelDispatcher:
     def __init__(self, timeout_seconds: float = 60.0):
         self.timeout_seconds = timeout_seconds
 
+    async def _route_model(
+        self,
+        model: str,
+        system_msg: str,
+        prompt: str,
+        *,
+        timeout_seconds: float,
+    ) -> tuple[str, str]:
+        m_low = model.lower()
+        if m_low.startswith("ollama/") or "ollama" in m_low or "localhost" in m_low:
+            return await self._call_ollama(model, system_msg, prompt, timeout_seconds=timeout_seconds)
+        if "gemini" in m_low or "gemma" in m_low:
+            return await self._call_gemini(model, system_msg, prompt, timeout_seconds=timeout_seconds)
+        if "deepseek" in m_low:
+            return await self._call_deepseek(model, system_msg, prompt, timeout_seconds=timeout_seconds)
+        if "groq" in m_low or "llama" in m_low or "qwen" in m_low:
+            return await self._call_groq(model, system_msg, prompt, timeout_seconds=timeout_seconds)
+        if "claude" in m_low:
+            return await self._call_anthropic(model, system_msg, prompt, timeout_seconds=timeout_seconds)
+        return await self._call_openai(model, system_msg, prompt, timeout_seconds=timeout_seconds)
+
     async def generate_patch(
         self,
         persona: PersonaType,
@@ -214,19 +237,7 @@ class MultiModelDispatcher:
         if "claude" in model.lower() and not os.environ.get("ANTHROPIC_API_KEY"):
             model = get_recommended_model_for_persona(persona)
 
-        # Route by model identifier
-        if "gemini" in model.lower() or "gemma" in model.lower():
-            return await self._call_gemini(model, system_msg, prompt, timeout_seconds=eff_timeout)
-        elif "deepseek" in model.lower():
-            return await self._call_deepseek(model, system_msg, prompt, timeout_seconds=eff_timeout)
-        elif "groq" in model.lower() or "llama" in model.lower() or "qwen" in model.lower():
-            return await self._call_groq(model, system_msg, prompt, timeout_seconds=eff_timeout)
-        elif "ollama" in model.lower() or "localhost" in model.lower():
-            return await self._call_ollama(model, system_msg, prompt, timeout_seconds=eff_timeout)
-        elif "claude" in model.lower():
-            return await self._call_anthropic(model, system_msg, prompt, timeout_seconds=eff_timeout)
-        else:
-            return await self._call_openai(model, system_msg, prompt, timeout_seconds=eff_timeout)
+        return await self._route_model(model, system_msg, prompt, timeout_seconds=eff_timeout)
 
     async def _call_gemini(
         self, model: str, system: str, user_prompt: str, timeout_seconds: float | None = None
@@ -235,7 +246,7 @@ class MultiModelDispatcher:
         if not api_key:
             return "", "Missing GEMINI_API_KEY environment variable"
 
-        clean_model = "gemma-4-26b-a4b-it" if model.lower() in ("gemini", "default", "gemini-2.0-flash") else model
+        clean_model = "gemma-4-26b-a4b-it" if model.lower() in ("gemini", "default") else model
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{clean_model}:generateContent"
         headers = {
             "x-goog-api-key": api_key,
@@ -253,9 +264,9 @@ class MultiModelDispatcher:
                 resp = await client.post(url, headers=headers, json=payload)
                 resp.raise_for_status()
                 data = resp.json()
-                text = data["candidates"][0]["content"]["parts"][0]["text"]
+                text = data["candidates"][0]["content"]["parts"][0].get("text") or ""
                 return extract_diff_and_explanation(text)
-        except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
+        except (httpx.HTTPError, KeyError, IndexError, ValueError, TypeError) as exc:
             return "", f"Gemini API error: {exc}"
 
     async def _call_openai(
@@ -269,14 +280,15 @@ class MultiModelDispatcher:
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
-        payload = {
+        payload: dict[str, object] = {
             "model": model,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user_prompt},
             ],
-            "temperature": 0.2,
         }
+        if not model.lower().startswith(("o1", "o3", "o4")):
+            payload["temperature"] = 0.2
         try:
             async with httpx.AsyncClient(
                 timeout=timeout_seconds if timeout_seconds is not None else self.timeout_seconds
@@ -286,9 +298,9 @@ class MultiModelDispatcher:
                 )
                 resp.raise_for_status()
                 data = resp.json()
-                text = data["choices"][0]["message"]["content"]
+                text = data["choices"][0]["message"].get("content") or ""
                 return extract_diff_and_explanation(text)
-        except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
+        except (httpx.HTTPError, KeyError, IndexError, ValueError, TypeError) as exc:
             return "", f"OpenAI API error: {exc}"
 
     async def _call_deepseek(
@@ -319,9 +331,9 @@ class MultiModelDispatcher:
                 )
                 resp.raise_for_status()
                 data = resp.json()
-                text = data["choices"][0]["message"]["content"]
+                text = data["choices"][0]["message"].get("content") or ""
                 return extract_diff_and_explanation(text)
-        except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
+        except (httpx.HTTPError, KeyError, IndexError, ValueError, TypeError) as exc:
             return "", f"DeepSeek API error: {exc}"
 
     async def _call_groq(
@@ -331,7 +343,7 @@ class MultiModelDispatcher:
         if not api_key:
             return "", "Missing GROQ_API_KEY environment variable"
 
-        clean_model = "qwen/qwen3.8-27b" if model.lower() in ("groq", "default", "llama-3.3-70b-versatile") else model
+        clean_model = "qwen/qwen3.8-27b" if model.lower() in ("groq", "default") else model
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
@@ -353,15 +365,15 @@ class MultiModelDispatcher:
                 )
                 resp.raise_for_status()
                 data = resp.json()
-                text = data["choices"][0]["message"]["content"]
+                text = data["choices"][0]["message"].get("content") or ""
                 return extract_diff_and_explanation(text)
-        except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
+        except (httpx.HTTPError, KeyError, IndexError, ValueError, TypeError) as exc:
             return "", f"Groq API error: {exc}"
 
     async def _call_ollama(
         self, model: str, system: str, user_prompt: str, timeout_seconds: float | None = None
     ) -> tuple[str, str]:
-        clean_model = model.replace("ollama/", "")
+        clean_model = model.removeprefix("ollama/")
         payload = {
             "model": clean_model,
             "system": system,
@@ -375,21 +387,23 @@ class MultiModelDispatcher:
                 resp = await client.post("http://localhost:11434/api/generate", json=payload)
                 resp.raise_for_status()
                 data = resp.json()
-                text = data.get("response", "")
+                text = data.get("response") or ""
                 return extract_diff_and_explanation(text)
-        except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
+        except (httpx.HTTPError, KeyError, IndexError, ValueError, TypeError) as exc:
             return "", f"Ollama API error: {exc}"
 
     async def _call_anthropic(
         self, model: str, system: str, user_prompt: str, timeout_seconds: float | None = None
     ) -> tuple[str, str]:
+        eff_timeout = timeout_seconds if timeout_seconds is not None else self.timeout_seconds
         api_key = os.environ.get("ANTHROPIC_API_KEY")
         if not api_key:
-            # Automatic fallback to Gemini or OpenAI if Claude key not present
             fallback_model = get_recommended_model_for_persona(PersonaType.SURGICAL_MINIMALIST)
-            if "gemini" in fallback_model or "gemma" in fallback_model:
-                return await self._call_gemini(fallback_model, system, user_prompt, timeout_seconds=timeout_seconds)
-            return await self._call_openai(fallback_model, system, user_prompt, timeout_seconds=timeout_seconds)
+            if "claude" in fallback_model.lower():
+                return "", "Missing ANTHROPIC_API_KEY environment variable"
+            return await self._route_model(
+                fallback_model, system, user_prompt, timeout_seconds=eff_timeout
+            )
 
         headers = {
             "x-api-key": api_key,
