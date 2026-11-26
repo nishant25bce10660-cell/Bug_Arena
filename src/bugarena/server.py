@@ -498,8 +498,14 @@ def bugarena_autonomous_repair(
     # 1. Detection
     detect_res = bug_detect(repo_path, bounded_error, hint=hint)
     suspects = detect_res["suspects"]
-    primary_file = suspects[0]["file_path"] if suspects else "main.py"
-    primary_func = suspects[0]["function_name"] if suspects else "target"
+    if not suspects:
+        return {
+            "status": "NO_SUSPECTS_FOUND",
+            "bug_id": detect_res["bug_id"],
+            "error": "No source suspect locations could be localized from error_log.",
+        }
+    primary_file = suspects[0]["file_path"]
+    primary_func = suspects[0]["function_name"]
 
     # 2. Reproduction
     repro_res = bug_reproduce(
