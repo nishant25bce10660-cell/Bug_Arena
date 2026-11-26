@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>BugArena Fixture Target</title>
+  <link rel="stylesheet" href="/missing-style.css">
+  <link rel="stylesheet" href="/ok.css">
+  <style>
+    .wide-mobile-break { width: 920px; background: #eee; padding: 8px; }
+    @media print { body { color: #000; } }
+  </style>
+</head>
+<body>
+  <h1 id="dup-widget">BugArena Fixture App</h1>
+  <div id="dup-widget">Duplicate ID Element</div>
+
+  <img src="/ok.png" alt="Valid decorative badge">
+  <img src="/missing-hero.png">
+
+  <form id="signup-form">
+    <input id="email-input" type="text" placeholder="Email without label">
+    <input id="safe-input" type="text" aria-label="Safe labeled field">
+    <button id="submit-btn" type="submit">Submit</button>
+  </form>
+  <div id="form-result"></div>
+
+  <button id="crash-btn" type="button">Trigger Click Exception</button>
+  <button id="leak-btn" type="button">Allocate Leak</button>
+  <a href="/broken-destination">Broken Link</a>
+  <div class="wide-mobile-break">Mobile overflow block</div>
+
+  <script src="/app.js"></script>
+  <script async src="http://insecure.example.invalid/tracker.js"></script>
+</body>
+</html>

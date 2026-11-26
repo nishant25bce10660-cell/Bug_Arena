@@ -345,8 +345,18 @@ class BrowserCursor:
             await asyncio.sleep(min_gap - elapsed)
         self._last_nav_ts = time.monotonic()
         assert self.cdp is not None
+        load_before = len(self.cdp.events.get("Page.loadEventFired", []))
         res = await self.cdp.send("Page.navigate", {"url": url})
-        await asyncio.sleep(0.4)
+        deadline = time.monotonic() + 8.0
+        while time.monotonic() < deadline:
+            if len(self.cdp.events.get("Page.loadEventFired", [])) > load_before:
+                break
+            with contextlib.suppress(Exception):
+                st = await self.cdp.send("Runtime.evaluate", {"expression": "document.readyState", "returnByValue": True})
+                if st.get("result", {}).get("value") == "complete":
+                    break
+            await asyncio.sleep(0.1)
+        await asyncio.sleep(0.15)
         if not self.headless:
             await self.inject_visual_badge()
         return res

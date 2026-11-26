@@ -1,0 +1,25 @@
+{
+  "site_name": "BugArena Fixture Bug Site",
+  "planted_bugs": [
+    {"id": "FB-01", "kind": "console_error", "panel": "Console", "severity": "High", "match": "Cannot read properties of null"},
+    {"id": "FB-02", "kind": "asset_404", "panel": "Network", "severity": "High", "match": "/missing-style.css"},
+    {"id": "FB-03", "kind": "missing_alt_label", "panel": "Elements", "severity": "Medium", "match": "missing_alt"},
+    {"id": "FB-04", "kind": "duplicate_ids", "panel": "Elements", "severity": "Medium", "match": "dup-widget"},
+    {"id": "FB-05", "kind": "missing_security_headers", "panel": "Security", "severity": "Medium", "match": "Content-Security-Policy"},
+    {"id": "FB-06", "kind": "insecure_cookie", "panel": "Application", "severity": "High", "match": "session_pref"},
+    {"id": "FB-07", "kind": "broken_link", "panel": "Interaction flows", "severity": "Medium", "match": "/broken-destination"},
+    {"id": "FB-08", "kind": "mobile_layout_break", "panel": "Sensors and emulation", "severity": "Medium", "match": "overflow"},
+    {"id": "FB-09", "kind": "js_exception_on_click", "panel": "Interaction flows", "severity": "High", "match": "ReferenceError"},
+    {"id": "FB-10", "kind": "slow_api", "panel": "Network", "severity": "Medium", "match": "/api/slow"},
+    {"id": "FB-11", "kind": "broken_image", "panel": "Rendering and layers", "severity": "Medium", "match": "/missing-hero.png"},
+    {"id": "FB-12", "kind": "mixed_content", "panel": "Security", "severity": "High", "match": "http://insecure.example.invalid/tracker.js"},
+    {"id": "FB-13", "kind": "memory_growth", "panel": "Memory", "severity": "Medium", "match": "detached"},
+    {"id": "FB-14", "kind": "form_validation_bug", "panel": "Interaction flows", "severity": "Medium", "match": "empty-email-accepted"},
+    {"id": "FB-15", "kind": "deprecated_api", "panel": "Sources", "severity": "Low", "match": "document.write"}
+  ],
+  "decoys": [
+    {"id": "DECOY-01", "description": "Benign console.info message mentioning Error in label text"},
+    {"id": "DECOY-02", "description": "Valid 200 OK asset /ok.css"},
+    {"id": "DECOY-03", "description": "Properly labeled input with aria-label and valid image with alt"}
+  ]
+}

@@ -1,9 +1,9 @@
 # BugArena MCP — Project & Audit Report
 
-- **Generated (UTC):** `2026-11-26T11:29:29+00:00`
+- **Generated (UTC):** `2026-11-26T11:34:20+00:00`
 - **Repository:** `MCP server`
-- **Branch / HEAD:** `upgrade/bugarena-agents` @ `977b8f2`
-- **Tracked Files:** `148` across `19` audited areas
+- **Branch / HEAD:** `upgrade/bugarena-agents` @ `c3a81bd`
+- **Tracked Files:** `158` across `20` audited areas
 - **Auto-Update Trigger:** `.githooks/pre-commit` + `scripts/update_project_report.py` + `AGENTS.md`
 
 ## Audit Verdict
@@ -17,8 +17,8 @@
 | Check | Result | Details |
 | :--- | :--- | :--- |
 | `ruff check src tests scripts` | **PASS (0 issues)** | `All checks passed!` |
-| `pytest -q -m "not slow and not browser"` | **PASS (122 passed, 3 deselected in 17.50s)** | `Isolated unit + regression suites` |
-| `LoopOperator` Read-Only Audit | **PASS** | `19 areas, 0 open confirmed` |
+| `pytest -q -m "not slow and not browser"` | **PASS (124 passed, 4 deselected in 15.72s)** | `Isolated unit + regression suites` |
+| `LoopOperator` Read-Only Audit | **PASS** | `20 areas, 0 open confirmed` |
 
 ## MCP Tools
 Total registered tools: **13**
@@ -49,6 +49,7 @@ Total registered tools: **13**
 | `discovery` | 4 | YES | YES | - |
 | `docs` | 17 | YES | YES | - |
 | `evaluation` | 4 | YES | YES | - |
+| `inspect` | 4 | YES | YES | - |
 | `models` | 6 | YES | YES | - |
 | `packaging` | 4 | YES | YES | - |
 | `personas` | 2 | YES | YES | - |
@@ -58,7 +59,7 @@ Total registered tools: **13**
 | `scripts` | 3 | YES | YES | - |
 | `server` | 1 | YES | YES | - |
 | `synthesizer` | 3 | YES | YES | - |
-| `tests` | 52 | YES | YES | - |
+| `tests` | 58 | YES | YES | - |
 | `tournament` | 3 | YES | YES | - |
 | `truth` | 5 | YES | YES | - |
 
@@ -66,6 +67,7 @@ Total registered tools: **13**
 No open audit findings detected in the current codebase.
 
 ## Recent Changes
+- `c3a81bd feat(browser): add Chromium discovery, RFC 6455 CDP client, isolated [mcp_<browser>] cursors, and access gate`
 - `977b8f2 feat(truth): add EvidenceVault hash chain, ClaimLedger, CitationChecker, Scoreboard, and TranscriptLogger`
 - `3f51417 docs(phase1): add v2 PLAN, ARCHITECTURE, THREAT_MODEL, REQUIREMENTS_TRACE, and DEVIATIONS`
 - `7e95e91 fix(phase0): reconcile state, enforce real coverage, add tool descriptions & pytest markers`
@@ -77,17 +79,20 @@ No open audit findings detected in the current codebase.
 - `dec8234 fix(ECC-040): sync README and SKILL docs with MCP tools, scoring, and portable config`
 - `9c1dfde fix(ECC-039): replace tautological security assertion and test all 5 providers with MockTransport`
 - `00dec51 fix(ECC-043): ignore .env.*, reports, caches, .bugarena and comment .env.example blanks`
-- `9569200 fix(ECC-036): add check_api_keys --dry-run, JSON guard, and portable path hint`
 
 ## Working Tree Snapshot (`git status --short`)
 ```text
-M  src/bugarena/audit/coverage.py
-A  src/bugarena/browser/__init__.py
-A  src/bugarena/browser/cdp.py
-A  src/bugarena/browser/cursor.py
-A  src/bugarena/browser/discovery.py
-A  src/bugarena/browser/questionnaire.py
-A  tests/unit/test_browser_layer.py
+M  src/bugarena/browser/cursor.py
+A  src/bugarena/inspect/__init__.py
+A  src/bugarena/inspect/collectors.py
+A  src/bugarena/inspect/matrix.py
+A  src/bugarena/inspect/runner.py
+A  tests/fixtures/site_bugs/app.js
+A  tests/fixtures/site_bugs/app.js.map
+A  tests/fixtures/site_bugs/fixture_truth.json
+A  tests/fixtures/site_bugs/index.html
+A  tests/fixtures/site_bugs/server.py
+A  tests/unit/test_inspect_engine.py
 ```
 
 ## How This Report Stays Updated
