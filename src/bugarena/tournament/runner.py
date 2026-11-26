@@ -49,6 +49,7 @@ class TournamentRunner:
         """
         tournament_id = f"tourn_{uuid.uuid4().hex[:8]}"
         protected_paths = [repro_spec.test_file_path]
+        self.dispatcher.timeout_seconds = timeout_seconds
 
         async def generate_single(persona: PersonaType) -> CandidatePatch | None:
             if not self.generator_func:
