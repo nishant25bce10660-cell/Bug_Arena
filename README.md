@@ -38,12 +38,14 @@ Rather than trusting a single LLM patch proposal, BugArena executes a rigorous 5
          +--------------------+------------------+------------------+--------------------+
                                                  |
                                                  v
-                                  +----------------------------+
-                                  | Ephemeral Sandbox Manager  |
-                                  | (--network=none, jails,    |
-                                  |  isolated subshell/tempfs) |
-                                  +----------------------------+
+                                  +--------------------------------------------+
+                                  |         Ephemeral Sandbox Manager          |
+                                  | (Temp-dir host copy + env/arg allowlist;   |
+                                  |  optional docker/podman --network=none)    |
+                                  +--------------------------------------------+
 ```
+
+> **Security Note:** By default on hosts without container mode active (`BUGARENA_SANDBOX_MODE=container`), sandboxes copy files into an ephemeral temp directory and execute tests on the host with sanitized env/args rather than OS container jails. Configure Docker/Podman (`isolation_mode="container"`) for `--network=none --read-only --cap-drop=ALL` enforcement.
 
 ---
 

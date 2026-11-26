@@ -1,6 +1,7 @@
-"""Sandboxed command runner with timeout enforcement and output scrubbing."""
+"""Sandboxed command runner with optional container isolation, timeouts, and output scrubbing."""
 
 import os
+import shutil
 import subprocess
 import time
 from collections.abc import Mapping, Sequence
@@ -15,17 +16,55 @@ from bugarena.sandbox.security import (
 )
 
 
+def detect_container_runtime() -> str | None:
+    """Return available container runtime executable ('docker' or 'podman'), or None."""
+    return shutil.which("docker") or shutil.which("podman")
+
+
+def build_container_command(
+    runtime: str,
+    workspace: Path,
+    image: str,
+    clean_args: Sequence[str],
+) -> list[str]:
+    """Construct a network-disabled, read-only, capability-dropped container invocation."""
+    inner_args = list(clean_args)
+    if inner_args and Path(inner_args[0]).stem.lower().startswith("python"):
+        inner_args[0] = "python3"
+    return [
+        runtime,
+        "run",
+        "--rm",
+        "--network=none",
+        "--read-only",
+        "--cap-drop=ALL",
+        "--tmpfs",
+        "/tmp:rw,noexec,nosuid,size=64m",
+        "--pids-limit=64",
+        "--memory=512m",
+        "-v",
+        f"{workspace.resolve()}:/work:rw",
+        "-w",
+        "/work",
+        image,
+        *inner_args,
+    ]
+
+
 def run_sandboxed_command(
     workspace: Path | str,
     args: Sequence[str],
     timeout_seconds: float = 30.0,
     env_override: Mapping[str, str] | None = None,
+    isolation_mode: str = "auto",
+    container_image: str = "python:3.11-slim",
 ) -> ExecutionOutcome:
     """
-    Execute a command inside a sandboxed workspace directory safely.
+    Execute a command inside an ephemeral workspace safely.
 
-    Enforces argument sanitization, secret stripping from env, hard timeouts,
-    and output scrubbing.
+    Uses optional container isolation (`docker`/`podman --network=none --read-only --cap-drop=ALL`)
+    when `isolation_mode="container"` or `BUGARENA_SANDBOX_MODE=container` and a runtime exists;
+    otherwise runs inside an isolated temporary host directory with strict env/arg sanitization.
     """
     ws_path = Path(workspace).resolve()
     if not ws_path.is_dir():
@@ -35,6 +74,17 @@ def run_sandboxed_command(
     base_env = sanitize_env(dict(os.environ), allowlist_only=True)
     if env_override:
         base_env.update(sanitize_env(dict(env_override), allowlist_only=True))
+
+    mode = isolation_mode
+    if mode == "auto" and os.environ.get("BUGARENA_SANDBOX_MODE", "").lower() == "container":
+        mode = "container"
+    if mode == "container":
+        runtime = detect_container_runtime()
+        if not runtime:
+            raise SecurityViolationError(
+                "Container isolation requested but neither 'docker' nor 'podman' was found in PATH."
+            )
+        clean_args = build_container_command(runtime, ws_path, container_image, clean_args)
 
     start_time = time.perf_counter()
     try:

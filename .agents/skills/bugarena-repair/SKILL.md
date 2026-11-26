@@ -68,7 +68,7 @@ Submit candidate diffs using `agent_fix_tournament(repo_path, repro_test_file, c
 
 ### Stage 4: Sandboxed Verification & Scoring
 1. Call `evaluate_patches(repo_path, tournament_id, repro_test_file, repro_code)`.
-2. Each patch is tested in an isolated ephemeral directory:
+2. Each patch is tested inside an ephemeral temp-directory copy of the repository (or optional `docker`/`podman --network=none --read-only --cap-drop=ALL` container when `BUGARENA_SANDBOX_MODE=container`):
    - **Red-to-Green Gate**: The reproduction test must PASS.
    - **Zero Regression Gate**: Regressions in existing tests must equal 0.
    - **AST & Churn Analysis**: Penalizes unnecessary churn ($Q_{\text{churn}}$) and cyclomatic complexity increases ($Q_{\text{complexity}}$).
