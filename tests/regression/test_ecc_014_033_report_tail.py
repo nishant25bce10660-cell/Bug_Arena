@@ -2,9 +2,12 @@
 
 from pathlib import Path
 
+import pytest
+
 import bugarena.server as srv
 
 
+@pytest.mark.slow
 def test_ecc_014_033_report_path_persisted_tail_kept_and_truncation_warned(tmp_path):
     repo = tmp_path / "repo"
     (repo / "src").mkdir(parents=True)

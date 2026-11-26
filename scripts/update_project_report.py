@@ -17,6 +17,7 @@ SRC_DIR = ROOT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
+from bugarena.audit.ledger import FindingLedger, FindingState
 from bugarena.audit.loop import LoopOperator
 from bugarena.audit.tools import tool_git_ls
 from bugarena.reporting.markdown_formatter import save_markdown_report
@@ -48,20 +49,40 @@ def _git_metadata(repo: Path) -> dict[str, Any]:
     _, head = _run_cmd(["git", "rev-parse", "--short", "HEAD"], repo, timeout=10.0)
     _, status_short = _run_cmd(["git", "status", "--short"], repo, timeout=10.0)
     _, log_lines = _run_cmd(["git", "log", "-n", "12", "--oneline"], repo, timeout=10.0)
+    _, fix_lines = _run_cmd(["git", "log", "--oneline", "--grep=fix("], repo, timeout=10.0)
     return {
         "branch": branch.strip() or "unknown",
         "head": head.strip() or "unknown",
         "status_short": status_short.strip(),
         "recent_commits": [ln.strip() for ln in log_lines.splitlines() if ln.strip()],
+        "fix_commits": [ln.strip() for ln in fix_lines.splitlines() if ln.strip()],
     }
 
 
 def _collect_mcp_tools() -> list[tuple[str, str]]:
     async def _list() -> list[tuple[str, str]]:
         tools = await mcp.list_tools()
-        return [(t.name, (t.description or "").splitlines()[0].strip()) for t in tools]
+        out: list[tuple[str, str]] = []
+        for t in tools:
+            desc_lines = [ln.strip() for ln in (t.description or "").strip().splitlines() if ln.strip()]
+            out.append((t.name, desc_lines[0] if desc_lines else "-"))
+        return out
 
     return asyncio.run(_list())
+
+
+def _historical_ledger_counts(repo: Path) -> dict[str, int]:
+    """Read reconciled prior-audit counts when .bugarena/runs/main_upgrade_audit exists."""
+    ledger_path = repo / ".bugarena" / "runs" / "main_upgrade_audit" / "ledger.json"
+    if not ledger_path.is_file():
+        return {"fixed": 0, "dismissed": 0, "total": 0}
+    ledger = FindingLedger(ledger_path)
+    counts = ledger.counts()
+    return {
+        "fixed": counts.get(FindingState.FIXED.value, 0),
+        "dismissed": counts.get(FindingState.DISMISSED.value, 0),
+        "total": counts.get("TOTAL", 0),
+    }
 
 
 def _run_audit_sweep(repo: Path, *, write_bugarena_report: bool) -> dict[str, Any]:
@@ -95,9 +116,11 @@ def _render_markdown(
     ruff_out: str,
     pytest_rc: int | None,
     pytest_summary: str,
+    pytest_scope: str,
     tools: list[tuple[str, str]],
     audit_data: dict[str, Any],
     tracked_count: int,
+    hist_counts: dict[str, int],
 ) -> str:
     now_iso = datetime.now(UTC).isoformat(timespec="seconds")
     round_res = audit_data["round"]
@@ -135,13 +158,14 @@ def _render_markdown(
         f"- **Audit Engine Summary:** `{summary['status_line']}`",
         f"- **Module Coverage:** `{cov.coverage_pct:.1f}%` (`{cov.fully_examined_pct:.1f}%` statically read)",
         f"- **Open Confirmed Bugs:** `{open_confirmed}` | **Dismissed:** `{counts.get('DISMISSED', 0)}` | **Unverified:** `{counts.get('UNVERIFIED', 0)}`",
+        f"- **Historical Ledger & Fix History:** `{hist_counts['fixed']}` reconciled fixes (`{len(git_meta['fix_commits'])}` `fix(...)` commits in git history; `{hist_counts['dismissed']}` prior dismissed)",
         "",
         "## Verification Status",
         "| Check | Result | Details |",
         "| :--- | :--- | :--- |",
         f"| `ruff check src tests scripts` | **{ruff_label}** | `{scrub_sensitive_data(ruff_out.splitlines()[-1] if ruff_out else 'All checks passed!', base_dir=repo)}` |",
-        f"| `pytest -q --tb=short` | **{pytest_label}** | `Isolated unit + regression suites` |",
-        f"| `LoopOperator` Read-Only Audit | **PASS** | `9 specialist roles, {len(cov.areas)} areas, 0 open confirmed` |"
+        f"| `{pytest_scope}` | **{pytest_label}** | `Isolated unit + regression suites` |",
+        f"| `LoopOperator` Read-Only Audit | **PASS** | `{len(cov.areas)} areas, 0 open confirmed` |"
         if open_confirmed == 0
         else f"| `LoopOperator` Read-Only Audit | **OPEN FINDINGS ({open_confirmed})** | `{summary['status_line']}` |",
         "",
@@ -162,7 +186,7 @@ def _render_markdown(
         "| :--- | :---: | :---: | :---: | :--- |",
     ])
     for area in cov.areas:
-        dyn_or_test = "YES" if (area.dynamic_probe or area.test_exists or area.area in ("docs", "packaging")) else "NO"
+        dyn_or_test = "YES" if (area.dynamic_probe or area.test_exists) else "NO"
         f_list = ", ".join(area.findings_ids) if area.findings_ids else "-"
         lines.append(
             f"| `{area.area}` | {len(area.files)} | {'YES' if area.static_read else 'NO'} | {dyn_or_test} | {f_list} |"
@@ -204,25 +228,42 @@ def _render_markdown(
     return "\n".join(lines)
 
 
+def _content_without_volatile_fields(text: str) -> list[str]:
+    return [
+        ln
+        for ln in text.splitlines()
+        if not ln.startswith("- **Generated (UTC):**")
+        and "| `pytest" not in ln
+    ]
+
+
 def generate_project_report(
     *,
     repo_path: Path | str = ROOT_DIR,
     output_path: Path | str = "PROJECT_REPORT.md",
     skip_pytest: bool = False,
+    fast: bool = False,
     stage: bool = False,
 ) -> dict[str, Any]:
     """Audit the repository and write an updated PROJECT_REPORT.md."""
     repo = Path(repo_path).resolve()
     git_meta = _git_metadata(repo)
     tracked_files = tool_git_ls(repo)
+    hist_counts = _historical_ledger_counts(repo)
 
     ruff_rc, ruff_out = _run_cmd([sys.executable, "-m", "ruff", "check", "src", "tests", "scripts"], repo, timeout=60.0)
+
+    pytest_args = [sys.executable, "-m", "pytest", "-q", "--tb=short"]
+    pytest_scope = "pytest -q --tb=short"
+    if fast:
+        pytest_args.extend(["-m", "not slow and not browser"])
+        pytest_scope = 'pytest -q -m "not slow and not browser"'
 
     if skip_pytest or os.environ.get("BUGARENA_SKIP_NESTED_PYTEST") == "1":
         pytest_rc: int | None = None
         pytest_summary = "skipped"
     else:
-        pytest_rc, pytest_out = _run_cmd([sys.executable, "-m", "pytest", "-q", "--tb=short"], repo, timeout=240.0)
+        pytest_rc, pytest_out = _run_cmd(pytest_args, repo, timeout=240.0)
         last_line = [ln.strip() for ln in pytest_out.splitlines() if ln.strip()]
         pytest_summary = last_line[-1] if last_line else f"exit {pytest_rc}"
 
@@ -236,12 +277,32 @@ def generate_project_report(
         ruff_out=ruff_out,
         pytest_rc=pytest_rc,
         pytest_summary=pytest_summary,
+        pytest_scope=pytest_scope,
         tools=tools,
         audit_data=audit_data,
         tracked_count=len(tracked_files),
+        hist_counts=hist_counts,
     )
 
     out_path = Path(output_path)
+    target_check = out_path if out_path.is_absolute() else (repo / out_path)
+    if target_check.is_file():
+        existing = target_check.read_text(encoding="utf-8")
+        if _content_without_volatile_fields(existing) == _content_without_volatile_fields(md):
+            saved = target_check
+            if stage:
+                _run_cmd(["git", "add", str(saved)], repo, timeout=15.0)
+            counts = audit_data["round"]["counts"]
+            return {
+                "output_path": str(saved),
+                "coverage_pct": audit_data["coverage"].coverage_pct,
+                "open_confirmed": counts.get("CONFIRMED", 0),
+                "fixed_historical": hist_counts["fixed"],
+                "ruff_exit_code": ruff_rc,
+                "pytest_exit_code": pytest_rc,
+                "unchanged": True,
+            }
+
     if out_path.is_absolute():
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(md, encoding="utf-8")
@@ -257,8 +318,10 @@ def generate_project_report(
         "output_path": str(saved),
         "coverage_pct": audit_data["coverage"].coverage_pct,
         "open_confirmed": counts.get("CONFIRMED", 0),
+        "fixed_historical": hist_counts["fixed"],
         "ruff_exit_code": ruff_rc,
         "pytest_exit_code": pytest_rc,
+        "unchanged": False,
     }
 
 
@@ -266,6 +329,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Audit BugArena MCP and update PROJECT_REPORT.md.")
     parser.add_argument("--output", default="PROJECT_REPORT.md", help="Report file path relative to repo root.")
     parser.add_argument("--skip-tests", action="store_true", help="Skip pytest run (still runs ruff and LoopOperator audit).")
+    parser.add_argument("--fast", action="store_true", help="Run fast unit pytest tier (-m 'not slow and not browser').")
     parser.add_argument("--stage", action="store_true", help="Run git add on the updated report after generating it.")
     return parser.parse_args(argv)
 
@@ -275,6 +339,7 @@ if __name__ == "__main__":
     res = generate_project_report(
         output_path=args.output,
         skip_pytest=args.skip_tests,
+        fast=args.fast,
         stage=args.stage,
     )
     print(

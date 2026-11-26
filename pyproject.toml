@@ -28,6 +28,10 @@ bugarena = "bugarena.server:main"
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+    "slow: Slow integration or full-repo audit tests",
+    "browser: Tests requiring a live Chromium-based browser via CDP",
+]
 filterwarnings = [
     "ignore::DeprecationWarning"
 ]

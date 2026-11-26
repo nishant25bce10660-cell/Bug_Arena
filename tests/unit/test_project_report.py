@@ -3,6 +3,8 @@
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 from bugarena.audit.coverage import classify_area
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -23,6 +25,7 @@ def test_project_report_classification_areas():
     assert classify_area(".githooks/pre-commit") == "scripts"
 
 
+@pytest.mark.slow
 def test_generate_project_report_runs_audit_and_writes_markdown(tmp_path: Path):
     assert SCRIPT_PATH.is_file(), "Missing scripts/update_project_report.py"
     mod = _load_report_module()

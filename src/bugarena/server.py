@@ -110,7 +110,7 @@ def _get_bug(bug_id: str) -> BugSpec | None:
         return spec
 
 
-@mcp.tool()
+@mcp.tool(description="Analyze an error log or traceback, map AST scopes, and locate suspect bug positions.")
 def bug_detect(
     repo_path: str,
     error_log: str,
@@ -139,7 +139,7 @@ def bug_detect(
     }
 
 
-@mcp.tool()
+@mcp.tool(description="Synthesize a minimal pytest reproduction test and verify Red-baseline failure in an isolated sandbox.")
 def bug_reproduce(
     repo_path: str,
     suspect_file: str,
@@ -201,7 +201,7 @@ def bug_reproduce(
         }
 
 
-@mcp.tool()
+@mcp.tool(description="Register, validate, or generate competing candidate patches across bug-fixing personas.")
 def agent_fix_tournament(
     repo_path: str,
     repro_test_file: str,
@@ -337,7 +337,7 @@ def _validate_repro_code_ast(repro_code: str) -> None:
             raise SecurityViolationError(f"Unsafe attribute {node.attr!r} in repro_code")
 
 
-@mcp.tool()
+@mcp.tool(description="Evaluate tournament candidate patches in isolated sandboxes for Red-to-Green, regressions, AST syntax, and CC delta.")
 def evaluate_patches(
     repo_path: str,
     tournament_id: str,
@@ -397,7 +397,7 @@ def evaluate_patches(
     }
 
 
-@mcp.tool()
+@mcp.tool(description="Generate a tournament diagnostic report in markdown, json, or diff format and optionally save it inside repo_path.")
 def generate_fix_report(
     tournament_id: str,
     format: str = "markdown",
@@ -508,7 +508,7 @@ def generate_fix_report(
         }
 
 
-@mcp.tool()
+@mcp.tool(description="Generate and save a standalone Markdown diagnostic report covering suspects, traces, and reproduction status.")
 def generate_bug_report(
     repo_path: str,
     error_log: str,
@@ -553,7 +553,7 @@ def generate_bug_report(
     }
 
 
-@mcp.tool()
+@mcp.tool(description="Run the end-to-end autonomous repair lifecycle: detect, reproduce, tournament, evaluate, and report.")
 def bugarena_autonomous_repair(
     repo_path: str,
     error_log: str,

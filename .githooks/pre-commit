@@ -19,5 +19,5 @@ else
     PY_BIN="python"
 fi
 
-echo "[pre-commit] Auditing project and updating PROJECT_REPORT.md..."
-"$PY_BIN" scripts/update_project_report.py --stage
+echo "[pre-commit] Auditing project and updating PROJECT_REPORT.md (fast tier)..."
+"$PY_BIN" scripts/update_project_report.py --fast --stage

@@ -40,7 +40,7 @@ class CoverageMatrix(BaseModel):
         covered = sum(
             1
             for a in self.areas
-            if a.static_read and (a.dynamic_probe or a.test_exists or a.area in ("docs", "packaging"))
+            if a.static_read and (a.dynamic_probe or a.test_exists)
         )
         return round((covered / len(self.areas)) * 100.0, 2)
 
@@ -74,6 +74,8 @@ AREA_PREFIX_RULES: tuple[tuple[str, str], ...] = (
     (".gitignore", "packaging"),
     (".env.example", "packaging"),
     ("README.md", "docs"),
+    ("CONTRIBUTING.md", "docs"),
+    ("docs/", "docs"),
     ("PROJECT_REPORT.md", "docs"),
     ("AGENTS.md", "docs"),
     (".agents/", "docs"),
@@ -136,13 +138,18 @@ def build_coverage_matrix(
             for src_f in files_sorted
             if src_f.endswith(".py")
         ]
+        file_tokens = [
+            Path(src_f).name.lower()
+            for src_f in files_sorted
+            if src_f.endswith((".md", ".toml", ".example")) or Path(src_f).name.startswith(".")
+        ]
         has_test = (
             area_name == "tests"
             or any(
                 area_name in tf or any(Path(src_f).stem in tf for src_f in files_sorted)
                 for tf in test_files_lower
             )
-            or any(tok in body for tok in module_tokens for body in test_contents_lower)
+            or any(tok in body for tok in (*module_tokens, *file_tokens) for body in test_contents_lower)
         )
         areas.append(
             ModuleCoverage(
