@@ -4,15 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import html
 import json
 import shutil
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from bugarena.browser import BrowserCursor, discover_browsers
+from bugarena.sandbox.security import validate_safe_path
 from bugarena.truth import AgentScoreboard, Claim, ClaimLedger, ClaimStatus, EvidenceVault
+from bugarena.truth.vault import scrub_evidence_text
 
 
 def _minimal_pdf_bytes(title: str, lines: list[str]) -> bytes:
@@ -49,8 +53,20 @@ async def _chromium_render_pdf(html_path: Path, pdf_path: Path, executable: str,
     try:
         assert cursor.cdp is not None
         file_url = html_path.resolve().as_uri()
-        await cursor.cdp.send("Page.navigate", {"url": file_url})
-        await asyncio.sleep(0.5)
+        load_before = len(cursor.cdp.events.get("Page.loadEventFired", []))
+        res = await cursor.cdp.send("Page.navigate", {"url": file_url})
+        if isinstance(res, dict) and res.get("errorText"):
+            raise RuntimeError(f"Page.navigate failed rendering PDF: {res['errorText']}")
+        deadline = time.monotonic() + 8.0
+        while time.monotonic() < deadline:
+            if len(cursor.cdp.events.get("Page.loadEventFired", [])) > load_before:
+                break
+            with contextlib.suppress(Exception):
+                st = await cursor.cdp.send("Runtime.evaluate", {"expression": "document.readyState", "returnByValue": True})
+                if st.get("result", {}).get("value") == "complete":
+                    break
+            await asyncio.sleep(0.1)
+        await asyncio.sleep(0.2)
         pdf_res = await cursor.cdp.send(
             "Page.printToPDF",
             {
@@ -70,18 +86,27 @@ async def _chromium_render_pdf(html_path: Path, pdf_path: Path, executable: str,
 
 def _render_html_from_report(run_dir: Path, md_text: str, confirmed: list[Claim], vault: EvidenceVault) -> str:
     img_tags: list[str] = []
+    seen_ev: set[str] = set()
+    ref_to_claims: dict[str, list[str]] = {}
     for c in confirmed:
         for ref in c.evidence_refs:
-            ent = vault.get(ref)
-            if ent and ent.rel_path.lower().endswith((".png", ".jpg", ".jpeg")):
-                img_path = run_dir / ent.rel_path
-                if img_path.is_file():
-                    b64 = base64.b64encode(img_path.read_bytes()).decode("ascii")
-                    img_tags.append(
-                        f"<figure><figcaption>{html.escape(c.id)} — {html.escape(ent.evidence_id)} "
-                        f"(sha256:{ent.sha256[:12]})</figcaption>"
-                        f"<img src='data:image/png;base64,{b64}' style='max-width:100%;border:1px solid #ccc;'/></figure>"
-                    )
+            ref_to_claims.setdefault(ref, []).append(c.id)
+
+    for ent in vault.entries():
+        if ent.evidence_id in seen_ev:
+            continue
+        if ent.rel_path.lower().endswith((".png", ".jpg", ".jpeg")):
+            seen_ev.add(ent.evidence_id)
+            img_path = validate_safe_path(run_dir, ent.rel_path)
+            if img_path.is_file():
+                b64 = base64.b64encode(img_path.read_bytes()).decode("ascii")
+                mime = "image/jpeg" if ent.rel_path.lower().endswith((".jpg", ".jpeg")) else "image/png"
+                cids = ", ".join(ref_to_claims.get(ent.evidence_id, [])) or ent.tool_name
+                img_tags.append(
+                    f"<figure><figcaption>{html.escape(cids)} — {html.escape(ent.evidence_id)} "
+                    f"(sha256:{ent.sha256[:12]})</figcaption>"
+                    f"<img src='data:{mime};base64,{b64}' style='max-width:100%;border:1px solid #ccc;'/></figure>"
+                )
     body_pre = html.escape(md_text)
     return (
         "<!DOCTYPE html><html><head><meta charset='utf-8'><title>BugArena Report</title>"
@@ -95,7 +120,7 @@ def _render_html_from_report(run_dir: Path, md_text: str, confirmed: list[Claim]
 
 
 def _write_finding_folder(run_dir: Path, claim: Claim, vault: EvidenceVault) -> None:
-    fdir = run_dir / "findings" / claim.id
+    fdir = validate_safe_path(run_dir, f"findings/{claim.id}")
     ev_sub = fdir / "evidence"
     ev_sub.mkdir(parents=True, exist_ok=True)
     (fdir / "finding.json").write_text(claim.model_dump_json(indent=2), encoding="utf-8")
@@ -113,7 +138,7 @@ def _write_finding_folder(run_dir: Path, claim: Claim, vault: EvidenceVault) -> 
     selector = str(claim.where_found.get("selector") or "body")
     repro_py = (
         '"""Replayable CDP verification script for ' + claim.id + '."""\n\n'
-        "import asyncio\nfrom bugarena.browser import AccessPolicy, BrowserCursor, discover_browsers\n\n"
+        "import asyncio\nimport json\nfrom bugarena.browser import AccessPolicy, BrowserCursor, discover_browsers\n\n"
         f"TARGET_URL = {target_url!r}\n"
         f"SELECTOR = {selector!r}\n\n"
         "async def replay() -> dict:\n"
@@ -123,9 +148,14 @@ def _write_finding_folder(run_dir: Path, claim: Claim, vault: EvidenceVault) -> 
         "    policy = AccessPolicy.from_answers({'site_url': TARGET_URL, 'authorization': 'neither'})\n"
         "    cur = await BrowserCursor.launch(browser_name=browsers[0].name, executable=browsers[0].executable, headless=True)\n"
         "    try:\n"
-        "        await cur.navigate(TARGET_URL, policy=policy)\n"
-        "        res = await cur.cdp.send('Runtime.evaluate', {'expression': f'Boolean(document.querySelector({SELECTOR!r}))', 'returnByValue': True})\n"
-        "        return {'status': 'MATCH', 'selector_present': res.get('result', {}).get('value')}\n"
+        "        try:\n"
+        "            await cur.navigate(TARGET_URL, policy=policy)\n"
+        "        except Exception as exc:\n"
+        "            return {'status': 'CANNOT_RUN', 'reason': str(exc)}\n"
+        "        expr = f'Boolean(document.querySelector({json.dumps(SELECTOR)}))'\n"
+        "        res = await cur.cdp.send('Runtime.evaluate', {'expression': expr, 'returnByValue': True})\n"
+        "        present = bool(res.get('result', {}).get('value'))\n"
+        "        return {'status': 'MATCH' if present else 'MISMATCH', 'selector_present': present}\n"
         "    finally:\n"
         "        await cur.close()\n\n"
         "if __name__ == '__main__':\n"
@@ -143,7 +173,7 @@ def _write_finding_folder(run_dir: Path, claim: Claim, vault: EvidenceVault) -> 
     for ref in claim.evidence_refs:
         ent = vault.get(ref)
         if ent:
-            src = run_dir / ent.rel_path
+            src = validate_safe_path(run_dir, ent.rel_path)
             if src.is_file():
                 shutil.copy2(src, ev_sub / src.name)
 
@@ -266,7 +296,7 @@ def build_v2_report_bundle(
     for ent in vault.entries():
         lines.append(f"- `{ent.evidence_id}` | `{ent.tool_name}` | `{ent.rel_path}` | `sha256:{ent.sha256}`")
 
-    md_text = "\n".join(lines) + "\n"
+    md_text, _ = scrub_evidence_text("\n".join(lines) + "\n")
     if "md" in formats:
         (rdir / "REPORT.md").write_text(md_text, encoding="utf-8")
 

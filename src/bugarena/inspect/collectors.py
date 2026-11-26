@@ -13,7 +13,11 @@ import httpx
 from bugarena.browser.cdp import CDPClient, CDPError
 from bugarena.browser.cursor import AccessPolicy, AuthorizationError, BrowserCursor
 from bugarena.truth.transcript import TranscriptLogger
-from bugarena.truth.vault import EvidenceVault
+from bugarena.truth.vault import EvidenceVault, scrub_evidence_text
+
+
+def _clean_str(val: str) -> str:
+    return scrub_evidence_text(val)[0] if val else ""
 
 
 def _finding(
@@ -26,22 +30,35 @@ def _finding(
     url: str,
     selector: str = "",
     script_url: str = "",
+    line: int | None = None,
+    col: int | None = None,
+    quote_hint: str = "",
+    cited_numbers: tuple[str, ...] = (),
+    exploitable: bool = False,
     fix: str = "",
     browsers: tuple[str, ...] = (),
 ) -> dict[str, Any]:
+    where: dict[str, Any] = {
+        "url": _clean_str(url),
+        "panel": panel,
+        "selector": _clean_str(selector),
+        "script_url": _clean_str(script_url),
+    }
+    if line is not None:
+        where["line"] = line
+    if col is not None:
+        where["col"] = col
     return {
         "panel": panel,
-        "title": title,
+        "title": _clean_str(title),
         "severity": severity,
-        "detail": detail,
+        "detail": _clean_str(detail),
         "evidence_refs": evidence_ids,
-        "where_found": {
-            "url": url,
-            "panel": panel,
-            "selector": selector,
-            "script_url": script_url,
-        },
-        "fix_guidance": fix,
+        "where_found": where,
+        "quote_hint": _clean_str(quote_hint),
+        "cited_numbers": list(cited_numbers),
+        "exploitable": exploitable,
+        "fix_guidance": _clean_str(fix),
         "browsers_affected": list(browsers),
     }
 
@@ -104,6 +121,7 @@ async def collect_elements(
                 evidence_ids=[ev.evidence_id],
                 url=url,
                 selector="img:not([alt])",
+                quote_hint=str(val["missingAlt"][0].get("src") or "missingAlt"),
                 fix="Add descriptive alt='' attributes (WCAG 1.1.1).",
                 browsers=(browser_name,),
             )
@@ -114,10 +132,11 @@ async def collect_elements(
                 panel="Elements",
                 title=f"Form controls missing accessible label ({len(val['unlabeledInputs'])})",
                 severity="Medium",
-                detail=f"missing_alt / unlabeled form inputs: {val['unlabeledInputs']}",
+                detail=f"Unlabeled form inputs: {val['unlabeledInputs']}",
                 evidence_ids=[ev.evidence_id],
                 url=url,
                 selector="input:not([aria-label])",
+                quote_hint=str(val["unlabeledInputs"][0].get("id") or "unlabeledInputs"),
                 fix="Associate <label for=...> or aria-label on every form input (WCAG 1.3.1 / 4.1.2).",
                 browsers=(browser_name,),
             )
@@ -132,6 +151,8 @@ async def collect_elements(
                 evidence_ids=[ev.evidence_id],
                 url=url,
                 selector=f"#{val['dupIds'][0]['id']}",
+                quote_hint=str(val["dupIds"][0]["id"]),
+                cited_numbers=(str(val["dupIds"][0]["count"]),),
                 fix="Ensure every HTML id attribute is unique within the document.",
                 browsers=(browser_name,),
             )
@@ -146,6 +167,7 @@ async def collect_elements(
                 evidence_ids=[ev.evidence_id],
                 url=url,
                 selector="html",
+                quote_hint="badLang",
                 fix="Declare <html lang='en'> and <meta charset='utf-8'>.",
                 browsers=(browser_name,),
             )
@@ -173,7 +195,13 @@ def collect_console_and_issues(
         details = ex.get("exceptionDetails", {})
         exc_obj = details.get("exception", {})
         msg = exc_obj.get("description") or details.get("text") or "Uncaught JS exception"
-        errors.append({"kind": "exception", "message": msg, "url": details.get("url", ""), "line": details.get("lineNumber", 0)})
+        errors.append({
+            "kind": "exception",
+            "message": msg,
+            "url": details.get("url", ""),
+            "line": int(details.get("lineNumber", 0)) + 1,
+            "col": int(details.get("columnNumber", 0)),
+        })
 
     for call in console_calls:
         ctype = call.get("type", "")
@@ -190,16 +218,34 @@ def collect_console_and_issues(
     ev = vault.record_artifact(json.dumps(payload, indent=2), ext=".json", tool_name="cdp.console_issues", args_summary=url)
     findings: list[dict[str, Any]] = []
     for err in errors:
+        err_url = err.get("url", "")
+        msg_str = str(err.get("message", ""))
+        is_favicon = "favicon.ico" in err_url
+        is_network_log = err["kind"] == "log.error" or err.get("source") == "network"
+        if is_favicon:
+            sev = "Low"
+            fix_msg = "Serve a valid /favicon.ico or link rel='icon' asset."
+        elif is_network_log:
+            sev = "Medium"
+            fix_msg = "Verify referenced asset URL resolves HTTP 200 without DNS or network failure."
+        else:
+            sev = "High"
+            fix_msg = "Guard nullable values / fix undefined symbols before dereference."
+        quote = msg_str.splitlines()[0][:55] if msg_str else err["kind"]
         findings.append(
             _finding(
                 panel="Console",
-                title=f"Runtime {err['kind']}: {err['message'][:90]}",
-                severity="High",
+                title=f"Runtime {err['kind']}: {msg_str[:90]}",
+                severity=sev,
                 detail=json.dumps(err),
                 evidence_ids=[ev.evidence_id],
                 url=url,
-                script_url=err.get("url", ""),
-                fix="Guard nullable values / fix undefined symbols before dereference.",
+                script_url=err_url,
+                line=err.get("line"),
+                col=err.get("col"),
+                quote_hint=quote,
+                cited_numbers=(str(err["line"]),) if err.get("line") else (),
+                fix=fix_msg,
                 browsers=(browser_name,),
             )
         )
@@ -213,6 +259,7 @@ def collect_console_and_issues(
                 detail=json.dumps(iss)[:500],
                 evidence_ids=[ev.evidence_id],
                 url=url,
+                quote_hint=code,
                 fix="Resolve browser audit issue reported by Chromium Audits domain.",
                 browsers=(browser_name,),
             )
@@ -257,34 +304,76 @@ async def collect_sources(
         cov_res = await cdp.send("Profiler.takePreciseCoverage")
         await cdp.send("Profiler.stopPreciseCoverage")
 
-    ev = vault.record_artifact(
-        json.dumps({"scripts": scripts_info, "coverage_entries": len(cov_res.get("result", []))}, indent=2),
-        ext=".json",
-        tool_name="cdp.sources",
-        args_summary=base_url,
-    )
-
+    deprecated_hits: list[dict[str, Any]] = []
     for sc in parsed:
         surl = sc.get("url", "")
         if not surl.startswith(origin):
             continue
         with contextlib.suppress(CDPError):
             src_text = (await cdp.send("Debugger.getScriptSource", {"scriptId": sc["scriptId"]})).get("scriptSource", "")
-            if "document.write(" in src_text:
-                findings.append(
-                    _finding(
-                        panel="Sources",
-                        title=f"Deprecated synchronous DOM write (document.write) in {surl}",
-                        severity="Low",
-                        detail=f"document.write detected in script {surl}",
-                        evidence_ids=[ev.evidence_id],
-                        url=base_url,
-                        script_url=surl,
-                        fix="Replace document.write() with standard DOM APIs (createElement / textContent).",
-                        browsers=(browser_name,),
-                    )
-                )
-    return {"evidence_id": ev.evidence_id, "source_maps": source_maps, "scripts": scripts_info, "findings": findings}
+            for line_no, raw_ln in enumerate(src_text.splitlines(), 1):
+                if "document.write(" in raw_ln:
+                    deprecated_hits.append({
+                        "url": surl,
+                        "api": "document.write(",
+                        "line": line_no,
+                        "snippet": raw_ln.strip()[:120],
+                    })
+                    break
+
+    source_map_contents: dict[str, dict[str, Any]] = {}
+    if source_maps:
+        is_loopback = urlparse(base_url).hostname in ("127.0.0.1", "localhost")
+        async with httpx.AsyncClient(timeout=4.0, trust_env=not is_loopback) as client:
+            for js_url, map_url in source_maps.items():
+                if not map_url.startswith(origin):
+                    continue
+                with contextlib.suppress(httpx.HTTPError, ValueError):
+                    resp = await client.get(map_url)
+                    if resp.status_code == 200 and len(resp.content) <= 2_000_000:
+                        parsed_map = resp.json()
+                        if isinstance(parsed_map, dict) and "mappings" in parsed_map:
+                            source_map_contents[js_url] = parsed_map
+
+    ev = vault.record_artifact(
+        json.dumps(
+            {
+                "scripts": scripts_info,
+                "coverage_entries": len(cov_res.get("result", [])),
+                "deprecated_apis": deprecated_hits,
+                "source_maps_fetched": sorted(source_map_contents.keys()),
+            },
+            indent=2,
+        ),
+        ext=".json",
+        tool_name="cdp.sources",
+        args_summary=base_url,
+    )
+
+    for hit in deprecated_hits:
+        findings.append(
+            _finding(
+                panel="Sources",
+                title=f"Deprecated synchronous DOM write (document.write) in {hit['url']}",
+                severity="Low",
+                detail=f"document.write( detected at line {hit['line']} in {hit['url']}: {hit['snippet']}",
+                evidence_ids=[ev.evidence_id],
+                url=base_url,
+                script_url=hit["url"],
+                line=hit["line"],
+                quote_hint="document.write(",
+                cited_numbers=(str(hit["line"]),),
+                fix="Replace document.write() with standard DOM APIs (createElement / textContent).",
+                browsers=(browser_name,),
+            )
+        )
+    return {
+        "evidence_id": ev.evidence_id,
+        "source_maps": source_maps,
+        "source_map_contents": source_map_contents,
+        "scripts": scripts_info,
+        "findings": findings,
+    }
 
 
 def collect_network_and_security(
@@ -337,16 +426,20 @@ def collect_network_and_security(
     for entry in har_entries:
         u = entry["url"]
         st = entry["status"]
+        u_path = urlparse(u).path or u
         if st is not None and st >= 400:
+            is_fav = "favicon.ico" in u_path
             findings.append(
                 _finding(
                     panel="Network",
-                    title=f"HTTP {st} error loading resource {urlparse(u).path or u}",
-                    severity="High" if st >= 404 else "Medium",
+                    title=f"HTTP {st} error loading resource {u_path}",
+                    severity="Low" if is_fav else ("High" if st >= 500 else "Medium"),
                     detail=f"Resource {u} returned HTTP {st}",
                     evidence_ids=[ev.evidence_id],
                     url=base_url,
-                    fix="Fix broken asset/endpoint path or return valid response.",
+                    quote_hint=u_path,
+                    cited_numbers=(str(st),),
+                    fix="Serve /favicon.ico or remove broken asset link." if is_fav else "Fix broken asset/endpoint path or return valid response.",
                     browsers=(browser_name,),
                 )
             )
@@ -354,49 +447,83 @@ def collect_network_and_security(
             findings.append(
                 _finding(
                     panel="Network",
-                    title=f"Slow API response ({entry['duration_ms']} ms): {urlparse(u).path}",
+                    title=f"Slow API response ({entry['duration_ms']} ms): {u_path}",
                     severity="Medium",
                     detail=f"{u} took {entry['duration_ms']} ms",
                     evidence_ids=[ev.evidence_id],
                     url=base_url,
+                    quote_hint=u_path,
+                    cited_numbers=(str(entry["duration_ms"]),),
                     fix="Optimize backend endpoint latency, add caching, or parallelize fetches.",
                     browsers=(browser_name,),
                 )
             )
-        if entry["failed"] or (u.startswith("http://") and urlparse(u).hostname not in ("127.0.0.1", "localhost")):
+        is_external_insecure = u.startswith("http://") and urlparse(u).hostname not in ("127.0.0.1", "localhost")
+        if is_external_insecure:
             findings.append(
                 _finding(
                     panel="Security",
-                    title=f"Insecure HTTP / failed external resource: {u}",
+                    title=f"Insecure external HTTP subresource: {u}",
                     severity="High",
-                    detail=f"Mixed content / insecure external origin or network failure on {u}: {entry['failed']}",
+                    detail=f"Insecure HTTP external resource {u} failed={entry['failed']}",
                     evidence_ids=[ev.evidence_id],
                     url=base_url,
+                    quote_hint=u,
                     fix="Serve external subresources strictly over HTTPS with SRI.",
                     browsers=(browser_name,),
                 )
             )
+        elif entry["failed"] and st is None:
+            findings.append(
+                _finding(
+                    panel="Network",
+                    title=f"Network request failed ({entry['failed']}): {u_path}",
+                    severity="Medium",
+                    detail=f"Request {u} failed with {entry['failed']}",
+                    evidence_ids=[ev.evidence_id],
+                    url=base_url,
+                    quote_hint=str(entry["failed"]),
+                    fix="Verify endpoint availability and eliminate aborted/broken resource requests.",
+                    browsers=(browser_name,),
+                )
+            )
 
-    missing_sec = [
-        h
-        for h in ("content-security-policy", "x-frame-options", "referrer-policy")
-        if h not in doc_headers
-    ]
-    if missing_sec:
-        canonical_names = {"content-security-policy": "Content-Security-Policy", "x-frame-options": "X-Frame-Options", "referrer-policy": "Referrer-Policy"}
-        missing_str = ", ".join(canonical_names[h] for h in missing_sec)
+    if not doc_headers:
         findings.append(
             _finding(
                 panel="Security",
-                title=f"Missing security headers: {missing_str}",
-                severity="Medium",
-                detail=f"Document {base_url} (scheme={parsed_base.scheme}) lacks headers: {missing_str}",
+                title="Document response headers not captured in CDP network log",
+                severity="Low",
+                detail=f"No Document HTTP response captured for {base_url}; security headers unverified.",
                 evidence_ids=[ev.evidence_id],
                 url=base_url,
-                fix="Set Content-Security-Policy, X-Frame-Options, and Referrer-Policy on HTTP responses (OWASP Secure Headers).",
+                quote_hint="har_entries",
+                fix="Re-run network capture after full Document response completes.",
                 browsers=(browser_name,),
             )
         )
+    else:
+        missing_sec = [
+            h
+            for h in ("content-security-policy", "x-frame-options", "referrer-policy")
+            if h not in doc_headers
+        ]
+        if missing_sec:
+            canonical_names = {"content-security-policy": "Content-Security-Policy", "x-frame-options": "X-Frame-Options", "referrer-policy": "Referrer-Policy"}
+            missing_str = ", ".join(canonical_names[h] for h in missing_sec)
+            findings.append(
+                _finding(
+                    panel="Security",
+                    title=f"Missing security headers: {missing_str}",
+                    severity="Medium",
+                    detail=f"Document {base_url} (scheme={parsed_base.scheme}) lacks headers: {missing_str}",
+                    evidence_ids=[ev.evidence_id],
+                    url=base_url,
+                    quote_hint="har_entries",
+                    fix="Set Content-Security-Policy, X-Frame-Options, and Referrer-Policy on HTTP responses (OWASP Secure Headers).",
+                    browsers=(browser_name,),
+                )
+            )
 
     return {"evidence_id": ev.evidence_id, "har_entries": har_entries, "doc_headers": doc_headers, "findings": findings}
 
@@ -440,6 +567,7 @@ async def collect_application(
                     detail=f"Cookie {ck['name']}: secure={ck['secure']}, httpOnly={ck['httpOnly']}, sameSite={ck['sameSite'] or 'unset'}",
                     evidence_ids=[ev.evidence_id],
                     url=url,
+                    quote_hint=str(ck["name"]),
                     fix="Set Secure, HttpOnly, and SameSite=Lax|Strict on session/preference cookies.",
                     browsers=(browser_name,),
                 )
@@ -471,23 +599,25 @@ async def collect_performance_rendering_sensors(
     """
     render_val = (await cdp.send("Runtime.evaluate", {"expression": render_js, "returnByValue": True})).get("result", {}).get("value", {}) or {}
 
-    # Mobile emulation (375x812) horizontal overflow test
+    # Mobile emulation (375x812) horizontal overflow test with cleanup in finally
     await cdp.send(
         "Emulation.setDeviceMetricsOverride",
         {"width": 375, "height": 812, "deviceScaleFactor": 2, "mobile": True},
     )
-    await asyncio.sleep(0.15)
-    ov_val = (
-        await cdp.send(
-            "Runtime.evaluate",
-            {
-                "expression": "({scrollWidth: document.documentElement.scrollWidth, clientWidth: document.documentElement.clientWidth})",
-                "returnByValue": True,
-            },
-        )
-    ).get("result", {}).get("value", {}) or {}
-    with contextlib.suppress(CDPError):
-        await cdp.send("Emulation.clearDeviceMetricsOverride")
+    try:
+        await asyncio.sleep(0.15)
+        ov_val = (
+            await cdp.send(
+                "Runtime.evaluate",
+                {
+                    "expression": "({scrollWidth: document.documentElement.scrollWidth, clientWidth: document.documentElement.clientWidth})",
+                    "returnByValue": True,
+                },
+            )
+        ).get("result", {}).get("value", {}) or {}
+    finally:
+        with contextlib.suppress(CDPError):
+            await cdp.send("Emulation.clearDeviceMetricsOverride")
 
     bundle = {"metrics": metrics, "rendering": render_val, "mobile_viewport": ov_val}
     ev = vault.record_artifact(json.dumps(bundle, indent=2), ext=".json", tool_name="cdp.perf_render_sensors", args_summary=url)
@@ -502,6 +632,7 @@ async def collect_performance_rendering_sensors(
                 evidence_ids=[ev.evidence_id],
                 url=url,
                 selector=f"img[src='{img_src}']",
+                quote_hint=img_src,
                 fix="Verify image URL resolves HTTP 200 with valid dimensions.",
                 browsers=(browser_name,),
             )
@@ -515,6 +646,8 @@ async def collect_performance_rendering_sensors(
                 detail=f"Mobile viewport overflow detected: scrollWidth={ov_val['scrollWidth']} > clientWidth={ov_val['clientWidth']}",
                 evidence_ids=[ev.evidence_id],
                 url=url,
+                quote_hint="scrollWidth",
+                cited_numbers=(str(ov_val["scrollWidth"]), str(ov_val["clientWidth"])),
                 fix="Use responsive width/max-width: 100% instead of fixed wide pixel blocks.",
                 browsers=(browser_name,),
             )
@@ -529,26 +662,30 @@ async def collect_interaction_and_memory(
     url: str,
     links: list[str],
     transcript: TranscriptLogger,
+    *,
+    robots_disallow: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """Interaction flows (broken links + bounded clicks/forms when authorized) & Memory leak check."""
     assert cursor.cdp is not None
+    policy.assert_action_allowed("click_interaction", target_url=url, robots_disallow=robots_disallow)
     findings: list[dict[str, Any]] = []
     broken_links: list[dict[str, Any]] = []
 
-    # Safe link HEAD/GET check within authorized origin
-    async with httpx.AsyncClient(timeout=5.0) as client:
-        for href in links[:20]:
+    # Safe rate-limited link check honoring origin + robots_disallow
+    min_gap = 1.0 / max(policy.max_rps, 0.1)
+    async with httpx.AsyncClient(timeout=5.0, trust_env=False) as client:
+        for idx, href in enumerate(links[:20]):
             abs_u = urljoin(url, href)
             with contextlib.suppress(AuthorizationError):
-                policy.assert_action_allowed("navigate", target_url=abs_u)
+                policy.assert_action_allowed("navigate", target_url=abs_u, robots_disallow=robots_disallow)
+                if idx > 0:
+                    await asyncio.sleep(min_gap)
                 try:
                     r = await client.get(abs_u)
                     if r.status_code >= 400:
                         broken_links.append({"href": href, "url": abs_u, "status": r.status_code})
                 except httpx.HTTPError:
                     broken_links.append({"href": href, "url": abs_u, "status": "network_error"})
-
-    policy.assert_action_allowed("click_interaction", target_url=url)
     exc_before = len(cursor.cdp.events.get("Runtime.exceptionThrown", []))
     nodes_before = (
         await cursor.cdp.send("Performance.getMetrics")
@@ -602,6 +739,8 @@ async def collect_interaction_and_memory(
                 evidence_ids=[ev.evidence_id],
                 url=url,
                 selector=f"a[href='{bl['href']}']",
+                quote_hint=str(bl["href"]),
+                cited_numbers=(str(bl["status"]),) if isinstance(bl["status"], int) else (),
                 fix="Fix destination route or remove dead anchor href.",
                 browsers=(cursor.browser_name,),
             )
@@ -615,6 +754,7 @@ async def collect_interaction_and_memory(
                 detail=f"Interaction exception: {exc_desc}",
                 evidence_ids=[ev.evidence_id],
                 url=url,
+                quote_hint=exc_desc.splitlines()[0][:55],
                 fix="Define handler or guard DOM event listener.",
                 browsers=(cursor.browser_name,),
             )
@@ -629,6 +769,7 @@ async def collect_interaction_and_memory(
                 evidence_ids=[ev.evidence_id],
                 url=url,
                 selector="#signup-form",
+                quote_hint="empty-email-accepted",
                 fix="Add required + email pattern validation before accepting submission.",
                 browsers=(cursor.browser_name,),
             )
@@ -643,6 +784,8 @@ async def collect_interaction_and_memory(
                 evidence_ids=[ev.evidence_id],
                 url=url,
                 selector="#leak-btn",
+                quote_hint="leakedCount",
+                cited_numbers=(str(inter_res.get("leakedCount")),),
                 fix="Avoid retaining detached DOM element references in global arrays/closures.",
                 browsers=(cursor.browser_name,),
             )
@@ -653,16 +796,20 @@ async def collect_interaction_and_memory(
 async def collect_robots_and_sitemap(base_url: str, vault: EvidenceVault) -> dict[str, Any]:
     """Fetch robots.txt and sitemap.xml for scope and hygiene reporting."""
     out: dict[str, Any] = {}
-    async with httpx.AsyncClient(timeout=4.0) as client:
+    robots_disallow: tuple[str, ...] = ()
+    is_loopback = urlparse(base_url).hostname in ("127.0.0.1", "localhost")
+    async with httpx.AsyncClient(timeout=4.0, trust_env=not is_loopback) as client:
         for rel in ("/robots.txt", "/sitemap.xml"):
             target = urljoin(base_url, rel)
             try:
                 r = await client.get(target)
                 out[rel] = {"status": r.status_code, "preview": r.text[:300]}
+                if rel == "/robots.txt" and r.status_code == 200:
+                    robots_disallow = AccessPolicy.parse_robots_disallow(r.text)
             except httpx.HTTPError as exc:
                 out[rel] = {"status": "error", "error": str(exc)}
     ev = vault.record_artifact(json.dumps(out, indent=2), ext=".json", tool_name="http.site_meta", args_summary=base_url)
-    return {"evidence_id": ev.evidence_id, "meta": out}
+    return {"evidence_id": ev.evidence_id, "meta": out, "robots_disallow": robots_disallow}
 
 
 def compute_lighthouse_style_scores(findings: list[dict[str, Any]], vault: EvidenceVault, url: str) -> dict[str, Any]:

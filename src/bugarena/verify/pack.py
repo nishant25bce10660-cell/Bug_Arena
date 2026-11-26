@@ -35,23 +35,35 @@ def verify_run_folder(run_dir: Path) -> tuple[bool, list[str], list[dict]]:
 
     expected_prev = "GENESIS"
     vault_map: dict[str, dict] = {}
-    for idx, line in enumerate(manifest_path.read_text(encoding="utf-8").splitlines(), 1):
+    resolved_run = run_dir.resolve()
+    for idx, line in enumerate(manifest_path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
         if not line.strip():
             continue
-        entry = json.loads(line)
+        try:
+            entry = json.loads(line)
+        except ValueError as exc:
+            errors.append(f"Line {idx}: invalid manifest JSON ({exc})")
+            continue
+        ev_id = entry.get("evidence_id")
+        rel_path = entry.get("rel_path")
+        if not ev_id or not rel_path:
+            errors.append(f"Line {idx}: manifest entry missing evidence_id or rel_path")
+            continue
         if entry.get("prev_hash") != expected_prev:
-            errors.append(f"Chain break at {entry.get('evidence_id')}: prev_hash mismatch")
+            errors.append(f"Chain break at {ev_id}: prev_hash mismatch")
         if _canonical_entry_hash(entry) != entry.get("entry_hash"):
-            errors.append(f"Manifest entry_hash mismatch at {entry.get('evidence_id')}")
-        art = run_dir / entry["rel_path"]
-        if not art.is_file():
-            errors.append(f"Missing artifact {entry['rel_path']}")
+            errors.append(f"Manifest entry_hash mismatch at {ev_id}")
+        art = (resolved_run / str(rel_path)).resolve()
+        if not art.is_relative_to(resolved_run):
+            errors.append(f"Path traversal blocked for {ev_id}: {rel_path!r}")
+        elif not art.is_file():
+            errors.append(f"Missing artifact {rel_path}")
         else:
             actual_sha = hashlib.sha256(art.read_bytes()).hexdigest()
-            if actual_sha != entry["sha256"]:
-                errors.append(f"Artifact SHA-256 mismatch for {entry['evidence_id']}: expected {entry['sha256']}, got {actual_sha}")
-        vault_map[entry["evidence_id"]] = entry
-        expected_prev = entry["entry_hash"]
+            if actual_sha != entry.get("sha256"):
+                errors.append(f"Artifact SHA-256 mismatch for {ev_id}: expected {entry.get('sha256')}, got {actual_sha}")
+        vault_map[ev_id] = entry
+        expected_prev = str(entry.get("entry_hash") or expected_prev)
 
     claims_path = run_dir / "verify" / "claims.json"
     report_json_path = run_dir / "report.json"
@@ -60,9 +72,13 @@ def verify_run_folder(run_dir: Path) -> tuple[bool, list[str], list[dict]]:
         errors.append("Missing claims.json, report.json, or REPORT.md")
         return False, errors, claim_rows
 
-    claims_data = json.loads(claims_path.read_text(encoding="utf-8")).get("claims", [])
-    report_data = json.loads(report_json_path.read_text(encoding="utf-8"))
-    report_md = report_md_path.read_text(encoding="utf-8")
+    try:
+        claims_data = json.loads(claims_path.read_text(encoding="utf-8")).get("claims", [])
+        report_data = json.loads(report_json_path.read_text(encoding="utf-8"))
+        report_md = report_md_path.read_text(encoding="utf-8")
+    except (ValueError, OSError) as exc:
+        errors.append(f"Corrupt or unreadable report/claims artifact: {exc}")
+        return False, errors, claim_rows
 
     confirmed_in_claims = [c for c in claims_data if c.get("status") == "CONFIRMED"]
     if len(confirmed_in_claims) != report_data.get("confirmed_count"):
@@ -70,6 +86,9 @@ def verify_run_folder(run_dir: Path) -> tuple[bool, list[str], list[dict]]:
             f"Count mismatch: claims.json has {len(confirmed_in_claims)} CONFIRMED, "
             f"report.json has {report_data.get('confirmed_count')}"
         )
+    for rf in report_data.get("findings") or []:
+        if isinstance(rf, dict) and rf.get("status") != "CONFIRMED":
+            errors.append(f"Non-CONFIRMED claim leaked into report.json findings: {rf.get('id')} ({rf.get('status')})")
 
     for c in claims_data:
         cid = c.get("id", "UNKNOWN")
@@ -79,6 +98,11 @@ def verify_run_folder(run_dir: Path) -> tuple[bool, list[str], list[dict]]:
             claim_rows.append({"id": cid, "result": "FAIL", "reason": "empty evidence_refs"})
             continue
 
+        if c.get("status") == "CONFIRMED" and c.get("verified_by") == c.get("found_by"):
+            errors.append(f"Claim {cid}: verifier must differ from finder ({c.get('found_by')})")
+            claim_rows.append({"id": cid, "result": "FAIL", "reason": "self-verified claim"})
+            continue
+
         texts = []
         missing_ref = False
         for r in refs:
@@ -86,7 +110,10 @@ def verify_run_folder(run_dir: Path) -> tuple[bool, list[str], list[dict]]:
             if not ent:
                 missing_ref = True
                 break
-            p = run_dir / ent["rel_path"]
+            p = (resolved_run / str(ent["rel_path"])).resolve()
+            if not p.is_relative_to(resolved_run) or not p.is_file():
+                missing_ref = True
+                break
             if ent["rel_path"].lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".pdf")):
                 texts.append(f"{ent['evidence_id']} {ent['sha256']}")
             else:

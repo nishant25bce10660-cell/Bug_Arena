@@ -11,7 +11,9 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from bugarena.truth.scoreboard import AgentScoreboard
-from bugarena.truth.vault import EvidenceVault
+from bugarena.truth.vault import EvidenceVault, scrub_evidence_text
+
+_VALID_CLAIM_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,80}$")
 
 
 class ClaimStatus(StrEnum):
@@ -86,6 +88,13 @@ class Claim(BaseModel):
     fix_guidance: str = ""
     browsers_affected: tuple[str, ...] = ()
     origin: str = "bugarena"
+
+    @field_validator("id")
+    @classmethod
+    def _validate_id(cls, val: str) -> str:
+        if not val or ".." in val or not _VALID_CLAIM_ID_RE.match(val):
+            raise ValueError(f"Invalid Claim id {val!r}: must be a safe pathless identifier.")
+        return val
 
     @field_validator("evidence_refs")
     @classmethod
@@ -213,7 +222,20 @@ class ClaimLedger:
             common_path_broken=common_path_broken,
             a11y_or_perf_barrier=a11y_or_perf_barrier,
         )
-        stored = claim.model_copy(update={"severity": sev, "severity_justification": just})
+        clean_where = {
+            k: (scrub_evidence_text(v)[0] if isinstance(v, str) else v)
+            for k, v in claim.where_found.items()
+        }
+        stored = claim.model_copy(
+            update={
+                "statement": scrub_evidence_text(claim.statement)[0],
+                "how_it_occurs": scrub_evidence_text(claim.how_it_occurs)[0],
+                "fix_guidance": scrub_evidence_text(claim.fix_guidance)[0],
+                "where_found": clean_where,
+                "severity": sev,
+                "severity_justification": just,
+            }
+        )
         self._claims[stored.id] = stored
         self.scoreboard.record_submission(stored.found_by)
         self._save()
@@ -223,15 +245,18 @@ class ClaimLedger:
         claim = self._claims.get(claim_id)
         if claim is None:
             raise KeyError(f"Claim '{claim_id}' not found.")
+        if claim.status in (ClaimStatus.RETRACTED, ClaimStatus.REJECTED):
+            raise ValueError(f"Claim '{claim_id}' is already {claim.status.value} and cannot be retracted again.")
         updated = claim.model_copy(update={"status": ClaimStatus.RETRACTED})
         self._claims[claim_id] = updated
+        detail_note = reason if by_agent in (claim.found_by, "self", "") else f"[{by_agent}] {reason}"
         self.scoreboard.record_outcome(
-            by_agent,
+            claim.found_by,
             claim_id=claim_id,
             confirmed=False,
             confidence=claim.confidence,
             retracted=True,
-            detail=reason,
+            detail=detail_note,
         )
         self._save()
         return updated

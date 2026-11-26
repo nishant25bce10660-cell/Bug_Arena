@@ -51,16 +51,32 @@ BUGARENA_PRIMARY_TOOLS: tuple[str, ...] = (
     "merge_both_skills",
 )
 
-_DANGEROUS_CALLS = frozenset({"eval", "exec", "compile", "__import__", "system", "popen", "Popen", "run"})
-_DANGEROUS_MODULES = frozenset({"subprocess", "ctypes", "pyautogui", "pynput", "pty"})
+_DANGEROUS_CALLS = frozenset({
+    "eval", "exec", "compile", "__import__", "system", "popen", "Popen", "run",
+    "getattr", "setattr", "rmtree", "unlink", "remove", "write_text", "write_bytes",
+    "execv", "execve", "execl", "spawnl", "create_subprocess_exec", "create_subprocess_shell",
+})
+_DANGEROUS_MODULES = frozenset({
+    "subprocess", "ctypes", "cffi", "pyautogui", "pynput", "pty",
+    "importlib", "runpy", "pickle", "marshal", "urllib", "http", "socket",
+    "httpx", "requests", "aiohttp", "websockets",
+})
+_VALID_PKG_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
 def _intake_to_quarantine(skill_source: str | Path, q_dir: Path) -> Path:
     src_str = str(skill_source).strip()
+    if not src_str or src_str.startswith("-"):
+        raise ValueError(f"Invalid skill_source {skill_source!r}")
     local = Path(src_str)
     if local.is_dir():
         dest = q_dir / local.name
-        shutil.copytree(local, dest, ignore=shutil.ignore_patterns(".git", ".venv", "__pycache__", ".env*"))
+        shutil.copytree(
+            local,
+            dest,
+            symlinks=True,
+            ignore=shutil.ignore_patterns(".git", ".venv", "__pycache__", ".env*"),
+        )
         return dest
     if local.is_file() and local.suffix.lower() == ".zip":
         dest = q_dir / local.stem
@@ -74,10 +90,17 @@ def _intake_to_quarantine(skill_source: str | Path, q_dir: Path) -> Path:
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_bytes(zf.read(member))
         return dest
-    if src_str.startswith(("https://", "http://", "git@")) or src_str.endswith(".git"):
+    from urllib.parse import urlparse
+
+    parsed = urlparse(src_str)
+    if parsed.scheme in ("http", "git", "ssh", "file", "ext") or src_str.startswith("git@"):
+        raise ValueError(f"Only https:// git remotes are permitted for skill intake, got {skill_source!r}")
+    if parsed.scheme == "https" and parsed.netloc:
         dest = q_dir / "cloned_skill"
+        env = sanitize_env(dict(os.environ), allowlist_only=True)
         res = subprocess.run(
-            ["git", "clone", "--depth", "1", src_str, str(dest)],
+            ["git", "-c", "protocol.ext.allow=never", "clone", "--depth", "1", "--", src_str, str(dest)],
+            env=env,
             capture_output=True,
             text=True,
             timeout=30.0,
@@ -91,6 +114,20 @@ def _intake_to_quarantine(skill_source: str | Path, q_dir: Path) -> Path:
 
 def _static_security_scan(skill_dir: Path) -> list[dict[str, str]]:
     hazards: list[dict[str, str]] = []
+    for p in sorted(skill_dir.rglob("*")):
+        rel = p.relative_to(skill_dir).as_posix()
+        if p.is_symlink():
+            hazards.append({"file": rel, "hazard": "symlink", "detail": "Symlink entry not permitted in untrusted skill"})
+        elif p.suffix.lower() in (".sh", ".ps1", ".bat", ".cmd", ".pth"):
+            hazards.append({"file": rel, "hazard": "non_python_script", "detail": f"Executable/hook file {p.suffix}"})
+    pyproj = skill_dir / "pyproject.toml"
+    if pyproj.is_file():
+        try:
+            pdata = tomllib.loads(pyproj.read_text(encoding="utf-8", errors="replace"))
+            if isinstance(pdata, dict) and "build-system" in pdata:
+                hazards.append({"file": "pyproject.toml", "hazard": "build_hook", "detail": "Custom [build-system] section"})
+        except tomllib.TOMLDecodeError as exc:
+            hazards.append({"file": "pyproject.toml", "hazard": "invalid_toml", "detail": str(exc)})
     for py_file in sorted(skill_dir.rglob("*.py")):
         rel = py_file.relative_to(skill_dir).as_posix()
         text = py_file.read_text(encoding="utf-8", errors="replace")
@@ -145,8 +182,11 @@ def _inventory_skill_without_exec(skill_dir: Path) -> dict[str, Any]:
 
     pyproj = skill_dir / "pyproject.toml"
     if pyproj.is_file():
-        data = tomllib.loads(pyproj.read_text(encoding="utf-8"))
-        deps.extend(str(d) for d in data.get("project", {}).get("dependencies", []))
+        try:
+            data = tomllib.loads(pyproj.read_text(encoding="utf-8", errors="replace"))
+            deps.extend(str(d) for d in data.get("project", {}).get("dependencies", []))
+        except tomllib.TOMLDecodeError:
+            pass
     req_txt = skill_dir / "requirements.txt"
     if req_txt.is_file():
         for ln in req_txt.read_text(encoding="utf-8").splitlines():
@@ -172,9 +212,7 @@ def _check_dependency_conflicts(deps: list[str]) -> list[str]:
                     f"Dependency conflict for '{req.name}': skill requires {req.specifier}, BugArena env has {installed_ver}"
                 )
         except importlib.metadata.PackageNotFoundError:
-            # Optional external dep flagged in report if not present
-            if re.search(r"[<>]=?|\!=|==", str(req.specifier)):
-                conflicts.append(f"Missing required dependency '{raw_dep}' in BugArena runtime")
+            conflicts.append(f"Missing required dependency '{raw_dep}' in BugArena runtime")
     return conflicts
 
 
@@ -192,15 +230,18 @@ def _sandbox_smoke_test(skill_dir: Path, tools: list[str]) -> tuple[bool, str]:
         "print(json.dumps(list(out.keys())))\n"
     )
     env = sanitize_env(dict(os.environ), allowlist_only=True)
-    res = subprocess.run(
-        [sys.executable, "-c", probe],
-        cwd=str(skill_dir),
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=10.0,
-        check=False,
-    )
+    try:
+        res = subprocess.run(
+            [sys.executable, "-c", probe],
+            cwd=str(skill_dir),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=10.0,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return False, "Smoke test timed out after 10.0s"
     if res.returncode != 0:
         return False, f"Smoke test failed (exit {res.returncode}): {res.stderr[:300]}"
     return True, f"Smoke test passed tools={res.stdout.strip()} (requested={tools})"
@@ -221,8 +262,12 @@ def merge_both_skills(
     """
     raw_name = Path(str(skill_source)).stem if Path(str(skill_source)).exists() else "external_skill"
     skill_key = re.sub(r"[^a-zA-Z0-9_]", "_", raw_name).strip("_") or "skill"
-    pkg_name = name or f"bugarena-{raw_name}"
-    out_dir = (Path(output_root) / pkg_name).resolve()
+    pkg_name = name or f"bugarena-{re.sub(r'[^A-Za-z0-9._-]', '_', raw_name) or 'skill'}"
+    if not _VALID_PKG_NAME_RE.match(pkg_name) or ".." in pkg_name:
+        raise ValueError(f"Invalid merged package name {pkg_name!r}")
+    out_root = Path(output_root).resolve()
+    out_root.mkdir(parents=True, exist_ok=True)
+    out_dir = validate_safe_path(out_root, pkg_name)
 
     with tempfile.TemporaryDirectory(prefix="bugarena_skill_quarantine_") as q_tmp:
         q_skill = _intake_to_quarantine(skill_source, Path(q_tmp))

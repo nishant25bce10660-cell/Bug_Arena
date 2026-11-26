@@ -11,13 +11,22 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
-from bugarena.sandbox.security import scrub_sensitive_data, validate_safe_path
+from bugarena.sandbox.security import (
+    SecurityViolationError,
+    scrub_sensitive_data,
+    validate_safe_path,
+)
 
+_COOKIE_HEADER_RE = re.compile(
+    r'("(?:cookie|set-cookie)"\s*:\s*")([^"\r\n]+)'
+    r'|(^(?:cookie|set-cookie)\s*:\s*)([^\r\n]+)',
+    re.IGNORECASE | re.MULTILINE,
+)
 _COOKIE_KV_RE = re.compile(
-    r"(?i)\b(cookie|set-cookie|sessionid|csrftoken|jsessionid|connect\.sid|auth_token|id_token|access_token)\s*[:=]\s*([^\r\n\"',;}]+)"
+    r"(?i)\b(cookie|set-cookie|sessionid|phpsessid|asp\.net_sessionid|csrftoken|jsessionid|connect\.sid|sid|jwt|auth_token|id_token|access_token)\s*[:=]\s*([^\r\n\"',;}]+)"
 )
 _AUTH_HEADER_RE = re.compile(
-    r'(?i)("?authorization"?\s*[:=]\s*"?)(?!Bearer\s+\[REDACTED)([^\r\n",}]+)'
+    r'(?i)("?(?:authorization|proxy-authorization|x-api-key|x-goog-api-key|x-auth-token)"?\s*[:=]\s*"?)(?!Bearer\s+\[REDACTED)([^\r\n",}]+)'
 )
 _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 _PHONE_RE = re.compile(r"(?<!\w)(?:\+?\d{1,3}[-.\s]?)?(?:\(\d{3}\)|\d{3})[-.\s]\d{3}[-.\s]\d{4}(?!\w)")
@@ -35,8 +44,13 @@ def scrub_evidence_text(text: str, *, base_dir: Path | str | None = None) -> tup
     if scrubbed != text:
         redactions.append({"kind": "token_or_path", "count": "1+"})
 
-    rules: tuple[tuple[str, re.Pattern[str], str], ...] = (
+    rules: tuple[tuple[str, re.Pattern[str], Any], ...] = (
         ("auth_header", _AUTH_HEADER_RE, r"\1[REDACTED_AUTH]"),
+        (
+            "cookie_header",
+            _COOKIE_HEADER_RE,
+            lambda m: f"{m.group(1) or m.group(3)}[REDACTED_COOKIE]",
+        ),
         ("cookie_or_session", _COOKIE_KV_RE, r"\1=[REDACTED_COOKIE]"),
         ("email", _EMAIL_RE, "[REDACTED_EMAIL]"),
         ("phone", _PHONE_RE, "[REDACTED_PHONE]"),
@@ -132,7 +146,7 @@ class EvidenceVault:
             "evidence_id": ev_id,
             "sha256": file_sha,
             "tool_name": tool_name,
-            "args_summary": scrub_sensitive_data(args_summary, base_dir=base_dir)[:240],
+            "args_summary": scrub_evidence_text(args_summary, base_dir=base_dir)[0][:240],
             "timestamp": ts,
             "prev_hash": prev_hash,
             "rel_path": rel_path,
@@ -190,7 +204,12 @@ class EvidenceVault:
             if _canonical_entry_hash(body) != recorded_entry_hash:
                 errors.append(f"{entry.evidence_id}: entry_hash mismatch (manifest row edited)")
 
-            artifact_path = self.run_dir / entry.rel_path
+            try:
+                artifact_path = validate_safe_path(self.run_dir, entry.rel_path)
+            except (SecurityViolationError, ValueError) as exc:
+                errors.append(f"{entry.evidence_id}: unsafe artifact path {entry.rel_path!r} ({exc})")
+                expected_prev = entry.entry_hash
+                continue
             if not artifact_path.is_file():
                 errors.append(f"{entry.evidence_id}: missing artifact {entry.rel_path}")
             else:

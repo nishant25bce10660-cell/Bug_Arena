@@ -61,6 +61,7 @@ def collect_cross_browser_diff(
             "detail": json.dumps(d),
             "evidence_refs": [ev.evidence_id],
             "where_found": {"url": url, "panel": "Cross-browser diff", "selector": "", "script_url": ""},
+            "quote_hint": d["finding_title"][:55],
             "fix_guidance": "Normalize browser-specific APIs and CSS layout across Chromium derivatives.",
             "browsers_affected": d["present_in"],
         }
@@ -90,21 +91,23 @@ async def capture_screenshots(
         is_binary=True,
     )
 
-    # Render non-destructive highlight box in Chromium and capture annotated PNG
+    # Render non-destructive highlight box in Chromium and capture annotated PNG (always cleanup in finally)
     highlight_js = (
-        "(() => { const el = document.querySelector(" + repr(annotate_selector) + "); "
+        "(() => { const el = document.querySelector(" + json.dumps(annotate_selector) + "); "
         "const box = document.createElement('div'); box.id='__ba_ann_box'; "
         "const r = el ? el.getBoundingClientRect() : {left:12,top:12,width:240,height:36}; "
         "box.style.cssText = `position:fixed;left:${Math.max(4,r.left)}px;top:${Math.max(4,r.top)}px;"
         "width:${Math.max(60,r.width)}px;height:${Math.max(24,r.height)}px;border:3px solid #dc2626;"
         "background:rgba(220,38,38,0.12);z-index:2147483646;pointer-events:none;font:bold 12px monospace;color:#dc2626;`;"
-        f"box.textContent = {label!r}; document.documentElement.appendChild(box); return true; }})()"
+        f"box.textContent = {json.dumps(label)}; document.documentElement.appendChild(box); return true; }})()"
     )
-    with contextlib.suppress(CDPError):
-        await cursor.cdp.send("Runtime.evaluate", {"expression": highlight_js})
-    ann_res = await cursor.cdp.send("Page.captureScreenshot", {"format": "png"})
-    with contextlib.suppress(CDPError):
-        await cursor.cdp.send("Runtime.evaluate", {"expression": "document.getElementById('__ba_ann_box')?.remove();"})
+    try:
+        with contextlib.suppress(CDPError):
+            await cursor.cdp.send("Runtime.evaluate", {"expression": highlight_js})
+        ann_res = await cursor.cdp.send("Page.captureScreenshot", {"format": "png"})
+    finally:
+        with contextlib.suppress(CDPError):
+            await cursor.cdp.send("Runtime.evaluate", {"expression": "document.getElementById('__ba_ann_box')?.remove();"})
     ann_bytes = base64.b64decode(ann_res["data"])
     ann_ev = vault.record_artifact(
         ann_bytes,
@@ -129,7 +132,13 @@ async def run_full_site_inspection(
 ) -> dict[str, Any]:
     """Run all requested DevTools panels across the target URL, storing evidence only via EvidenceVault."""
     assert cursor.cdp is not None
-    selected = set(ALL_PANELS) if panels == "all" else set(panels)
+    if panels == "all":
+        selected = set(ALL_PANELS)
+    else:
+        selected = set(panels)
+        unknown = selected - set(ALL_PANELS)
+        if unknown:
+            raise ValueError(f"Unknown panel(s): {sorted(unknown)}")
     matrix = InspectCoverageMatrix(vault.run_dir)
     all_findings: list[dict[str, Any]] = []
 
@@ -138,6 +147,7 @@ async def run_full_site_inspection(
     await asyncio.sleep(0.25)
 
     meta_res = await collect_robots_and_sitemap(url, vault)
+    robots_disallow: tuple[str, ...] = tuple(meta_res.get("robots_disallow", ()))
     screenshots = await capture_screenshots(cursor, vault, url, label=cursor.cursor_name)
     transcript.log(
         agent="inspect",
@@ -201,12 +211,18 @@ async def run_full_site_inspection(
     sens_findings = [f for f in prs_res["findings"] if f["panel"] == "Sensors and emulation"]
     if "Performance" in selected:
         matrix.mark_panel("Performance", covered=True, evidence_ids=(prs_res["evidence_id"],))
+    else:
+        matrix.mark_panel("Performance", covered=False, reason="Excluded by user panel selection")
     if "Rendering and layers" in selected:
         all_findings.extend(rend_findings)
         matrix.mark_panel("Rendering and layers", covered=True, evidence_ids=(prs_res["evidence_id"],), findings_count=len(rend_findings))
+    else:
+        matrix.mark_panel("Rendering and layers", covered=False, reason="Excluded by user panel selection")
     if "Sensors and emulation" in selected:
         all_findings.extend(sens_findings)
         matrix.mark_panel("Sensors and emulation", covered=True, evidence_ids=(prs_res["evidence_id"],), findings_count=len(sens_findings))
+    else:
+        matrix.mark_panel("Sensors and emulation", covered=False, reason="Excluded by user panel selection")
 
     if "Interaction flows" in selected or "Memory" in selected:
         try:
@@ -217,21 +233,34 @@ async def run_full_site_inspection(
                 url,
                 elem_res["data"].get("links", []),
                 transcript,
+                robots_disallow=robots_disallow,
             )
             int_findings = [f for f in inter_res["findings"] if f["panel"] == "Interaction flows"]
             mem_findings = [f for f in inter_res["findings"] if f["panel"] == "Memory"]
             if "Interaction flows" in selected:
                 all_findings.extend(int_findings)
                 matrix.mark_panel("Interaction flows", covered=True, evidence_ids=(inter_res["evidence_id"],), findings_count=len(int_findings))
+            else:
+                matrix.mark_panel("Interaction flows", covered=False, reason="Excluded by user panel selection")
             if "Memory" in selected:
                 all_findings.extend(mem_findings)
                 matrix.mark_panel("Memory", covered=True, evidence_ids=(inter_res["evidence_id"],), findings_count=len(mem_findings))
+            else:
+                matrix.mark_panel("Memory", covered=False, reason="Excluded by user panel selection")
         except AuthorizationError as err:
             matrix.mark_panel("Interaction flows", covered=False, reason=str(err))
             matrix.mark_panel("Memory", covered=False, reason="Interaction allocation blocked in passive mode")
+    else:
+        matrix.mark_panel("Interaction flows", covered=False, reason="Excluded by user panel selection")
+        matrix.mark_panel("Memory", covered=False, reason="Excluded by user panel selection")
 
-    lh_res = compute_lighthouse_style_scores(all_findings, vault, url)
-    matrix.mark_panel("Lighthouse-style", covered=True, evidence_ids=(lh_res["evidence_id"],))
+    if "Lighthouse-style" in selected:
+        lh_res = compute_lighthouse_style_scores(all_findings, vault, url)
+        lh_scores = lh_res["scores"]
+        matrix.mark_panel("Lighthouse-style", covered=True, evidence_ids=(lh_res["evidence_id"],))
+    else:
+        lh_scores = {}
+        matrix.mark_panel("Lighthouse-style", covered=False, reason="Excluded by user panel selection")
     matrix.mark_panel("Cross-browser diff", covered=False, reason="Single browser run; compare in multi-browser orchestrator")
 
     if write_matrix:
@@ -243,7 +272,8 @@ async def run_full_site_inspection(
         "url": url,
         "findings": all_findings,
         "source_maps": src_res["source_maps"],
+        "source_map_contents": src_res.get("source_map_contents", {}),
         "screenshots": screenshots,
-        "lighthouse_scores": lh_res["scores"],
+        "lighthouse_scores": lh_scores,
         "coverage": matrix.summary(),
     }

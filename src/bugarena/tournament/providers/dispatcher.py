@@ -367,6 +367,7 @@ class MultiModelDispatcher:
                 {"role": "user", "content": user_prompt},
             ],
             "temperature": 0.2,
+            "max_tokens": 2048,
         }
         try:
             async with httpx.AsyncClient(
@@ -401,6 +402,7 @@ class MultiModelDispatcher:
                 {"role": "user", "content": user_prompt},
             ],
             "temperature": 0.2,
+            "max_tokens": 2048,
         }
         try:
             async with httpx.AsyncClient(

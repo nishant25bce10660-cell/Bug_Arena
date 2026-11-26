@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from bugarena.sandbox.security import SecurityViolationError, validate_safe_path
+
 _B64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 _B64_MAP = {ch: idx for idx, ch in enumerate(_B64_CHARS)}
 
@@ -101,11 +103,20 @@ def link_site_and_project_findings(
         if script_url and script_url in source_maps and isinstance(line_num, int) and line_num >= 1:
             resolved = resolve_source_location(source_maps[script_url], gen_line=line_num, gen_col=col_num)
             if resolved:
-                rel_src = resolved["source"].lstrip("./")
-                where["project_file"] = rel_src
-                where["project_line"] = resolved["line"]
-                if proj_root is None or (proj_root / rel_src).is_file():
+                rel_src = resolved["source"].lstrip("./").lstrip("/")
+                if proj_root is None:
+                    where["project_file"] = rel_src
+                    where["project_line"] = resolved["line"]
                     linked = True
+                else:
+                    try:
+                        candidate = validate_safe_path(proj_root, rel_src)
+                        if candidate.is_file():
+                            where["project_file"] = candidate.relative_to(proj_root).as_posix()
+                            where["project_line"] = resolved["line"]
+                            linked = True
+                    except (SecurityViolationError, ValueError):
+                        linked = False
 
         item["where_found"] = where
         item["linkage_status"] = "linked" if linked else "site_only"

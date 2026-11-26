@@ -63,17 +63,54 @@ class AgentScoreboard:
         }
         self.scoreboard_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
-        # Update cumulative .bugarena/agent_scores.json cleanly
+        # Update cumulative .bugarena/agent_scores.json cleanly (preserve prior runs, fail on corruption)
         self.global_scores_path.parent.mkdir(parents=True, exist_ok=True)
         global_data: dict[str, Any] = {}
         if self.global_scores_path.is_file():
             try:
-                global_data = json.loads(self.global_scores_path.read_text(encoding="utf-8"))
-            except ValueError:
-                global_data = {}
+                loaded = json.loads(self.global_scores_path.read_text(encoding="utf-8"))
+                if not isinstance(loaded, dict):
+                    raise TypeError("Top-level JSON is not an object")
+                global_data = loaded
+            except (ValueError, TypeError) as exc:
+                backup = self.global_scores_path.with_suffix(".json.corrupt")
+                backup.write_bytes(self.global_scores_path.read_bytes())
+                raise ValueError(f"Corrupt {self.global_scores_path}: backed up to {backup.name} ({exc})") from exc
+        runs_map = global_data.setdefault("runs", {})
+        runs_map[self.run_dir.name] = {k: v.model_dump() for k, v in self._scores.items()}
+
+        agg_raw: dict[str, dict[str, Any]] = {}
+        for run_agents in runs_map.values():
+            if not isinstance(run_agents, dict):
+                continue
+            for name, raw_sc in run_agents.items():
+                cur = agg_raw.setdefault(
+                    name,
+                    {
+                        "agent_name": name,
+                        "claims_submitted": 0,
+                        "claims_confirmed": 0,
+                        "claims_disproved": 0,
+                        "claims_retracted": 0,
+                        "fabrication_failures": 0,
+                        "brier_samples": [],
+                        "honesty": 1.0,
+                    },
+                )
+                for key in (
+                    "claims_submitted",
+                    "claims_confirmed",
+                    "claims_disproved",
+                    "claims_retracted",
+                    "fabrication_failures",
+                ):
+                    cur[key] += int(raw_sc.get(key, 0))
+                cur["brier_samples"].extend(list(raw_sc.get("brier_samples", ())))
+                cur["honesty"] = min(float(cur["honesty"]), float(raw_sc.get("honesty", 1.0)))
+
         agents_map = global_data.setdefault("agents", {})
-        for name, sc in self._scores.items():
-            agents_map[name] = sc.model_dump()
+        for name, raw_agg in agg_raw.items():
+            agents_map[name] = self._recompute(AgentScore(**raw_agg)).model_dump()
         global_data["updated_at"] = payload["updated_at"]
         self.global_scores_path.write_text(json.dumps(global_data, indent=2), encoding="utf-8")
 

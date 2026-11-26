@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -15,8 +17,9 @@ from bugarena.inspect.collectors import (
     collect_elements,
     collect_network_and_security,
     collect_performance_rendering_sensors,
+    enable_base_domains,
 )
-from bugarena.inspect.matrix import InspectCoverageMatrix
+from bugarena.inspect.matrix import ALL_PANELS, InspectCoverageMatrix
 from bugarena.inspect.runner import collect_cross_browser_diff, run_full_site_inspection
 from bugarena.truth import AgentScoreboard, Claim, ClaimLedger, EvidenceVault, TranscriptLogger
 
@@ -82,7 +85,13 @@ class SiteAuditCoordinator:
         ledger = ClaimLedger(run_dir, vault=vault, scoreboard=scoreboard)
         transcript = TranscriptLogger(run_dir)
 
-        detected = discover_browsers()
+        answers = sess.get("answers", {})
+        overrides = {
+            k.removesuffix("_path").lower(): str(v)
+            for k, v in answers.items()
+            if k.endswith("_path") and v and k != "project_path"
+        }
+        detected = discover_browsers(overrides=overrides)
         by_name = {b.name: b for b in detected}
         requested = [b for b in sess["browsers"] if b in by_name and by_name[b].found]
         skipped_browsers = {
@@ -129,18 +138,34 @@ class SiteAuditCoordinator:
             diff_res = collect_cross_browser_diff(per_browser, vault, policy.site_url)
             raw_findings.extend(diff_res.get("findings", []))
 
-            # Merge coverage matrices & mark Cross-browser diff when >= 2 browsers ran
+            # Merge coverage matrices across ALL browsers & mark Cross-browser diff when >= 2 ran
             matrix = InspectCoverageMatrix(run_dir)
-            first_cov = next(iter(per_browser.values()))["coverage"]["panels"]
-            for p_item in first_cov:
-                if p_item["panel"] == "Cross-browser diff":
-                    continue
+            merged_cov: dict[str, dict[str, Any]] = {}
+            for res in per_browser.values():
+                for p_item in res["coverage"]["panels"]:
+                    pname = p_item["panel"]
+                    if pname == "Cross-browser diff":
+                        continue
+                    cur = merged_cov.setdefault(
+                        pname,
+                        {"covered": False, "reasons": [], "evidence_ids": [], "findings_count": 0},
+                    )
+                    if p_item["covered"]:
+                        cur["covered"] = True
+                    if p_item["reason"]:
+                        cur["reasons"].append(p_item["reason"])
+                    for eid in p_item["evidence_ids"]:
+                        if eid not in cur["evidence_ids"]:
+                            cur["evidence_ids"].append(eid)
+                    cur["findings_count"] += int(p_item["findings_count"])
+
+            for pname, cur in merged_cov.items():
                 matrix.mark_panel(
-                    p_item["panel"],
-                    covered=p_item["covered"],
-                    reason=p_item["reason"],
-                    evidence_ids=tuple(p_item["evidence_ids"]),
-                    findings_count=p_item["findings_count"],
+                    pname,
+                    covered=cur["covered"],
+                    reason=" | ".join(dict.fromkeys(cur["reasons"])),
+                    evidence_ids=tuple(cur["evidence_ids"]),
+                    findings_count=cur["findings_count"],
                 )
             if len(per_browser) >= 2:
                 matrix.mark_panel(
@@ -157,19 +182,29 @@ class SiteAuditCoordinator:
                 )
             matrix.write_markdown()
 
-            # Submit findings into ClaimLedger via CitationChecker + independent verifier pass
+            round_num = int(sess.get("round_count", 0)) + 1
+            sess["round_count"] = round_num
+
+            # Submit findings into ClaimLedger via CitationChecker + honesty check + verifier pass
             for idx, item in enumerate(raw_findings, 1):
-                cid = f"F-{idx:04d}"
+                cid = f"F-{idx:04d}" if round_num == 1 else f"F-R{round_num:02d}-{idx:04d}"
                 analyst = _panel_to_analyst(item["panel"])
-                quote = item["detail"][:60] if item["detail"] else ""
-                # Only attach verbatim snippet from stored artifact as quote
                 ev_txt = vault.read_artifact_text(item["evidence_refs"][0]) or ""
-                verbatim = quote if quote and quote in ev_txt else ""
+                hint = str(item.get("quote_hint") or "")
+                detail_snip = item["detail"][:60] if item.get("detail") else ""
+                spans: list[str] = []
+                if hint and hint in ev_txt:
+                    spans.append(hint)
+                elif detail_snip and detail_snip in ev_txt:
+                    spans.append(detail_snip)
+                c_nums = tuple(n for n in item.get("cited_numbers", ()) if n and n in ev_txt)
+
                 claim = Claim(
                     id=cid,
                     statement=item["title"],
                     evidence_refs=tuple(item["evidence_refs"]),
-                    quoted_spans=(verbatim,) if verbatim else (),
+                    quoted_spans=tuple(spans),
+                    cited_numbers=c_nums,
                     confidence=0.9,
                     found_by=analyst,
                     evidence_type="DYNAMIC",
@@ -181,22 +216,51 @@ class SiteAuditCoordinator:
                 )
                 sub = ledger.submit_claim(
                     claim,
-                    security_exploitable=(item["panel"] == "Security" and item.get("severity") == "High"),
+                    security_exploitable=bool(item.get("exploitable", False)),
                     common_path_broken=(item.get("severity") == "High"),
                     a11y_or_perf_barrier=(item.get("severity") == "Medium"),
                 )
+                transcript.log(
+                    agent=analyst,
+                    cursor=f"[mcp_{item['browsers_affected'][0]}]" if item.get("browsers_affected") else "[mcp_site]",
+                    tool="claim.submit",
+                    args={"claim_id": cid, "refs": list(claim.evidence_refs)},
+                    result_bytes=json.dumps({"accepted": sub["accepted"], "status": str(sub["status"])}),
+                )
                 if sub["accepted"]:
+                    flagged_now = any(
+                        h["claim_id"] == cid for h in self.run_honesty_audit(ledger, vault)
+                    )
+                    verdict = "UNVERIFIED" if flagged_now else "CONFIRMED"
+                    v_detail = (
+                        "Flagged by honesty audit prior to confirmation."
+                        if flagged_now
+                        else f"Verified dynamically across {list(per_browser)}"
+                    )
                     ledger.record_verification(
                         cid,
                         verifier="verifier",
-                        verdict="CONFIRMED",
-                        detail=f"Verified dynamically across {list(per_browser)}",
+                        verdict=verdict,
+                        detail=v_detail,
+                    )
+                    transcript.log(
+                        agent="verifier",
+                        cursor="[mcp_verifier]",
+                        tool="claim.verify",
+                        args={"claim_id": cid},
+                        result_bytes=json.dumps({"verdict": verdict, "detail": v_detail}),
                     )
 
             honesty_flags = self.run_honesty_audit(ledger, vault)
+            merged_smaps: dict[str, dict[str, Any]] = {}
+            for res in per_browser.values():
+                merged_smaps.update(res.get("source_map_contents", {}))
+            if merged_smaps:
+                (run_dir / "source_maps.json").write_text(json.dumps(merged_smaps, indent=2), encoding="utf-8")
             state_rec = {
                 "run_id": run_id,
                 "run_dir": str(run_dir),
+                "round": round_num,
                 "browsers_used": list(per_browser),
                 "skipped_browsers": skipped_browsers,
                 "source_maps": next(iter(per_browser.values())).get("source_maps", {}),
@@ -210,15 +274,27 @@ class SiteAuditCoordinator:
             return state_rec
         finally:
             for cur in cursors.values():
-                await cur.close()
+                with contextlib.suppress(Exception):
+                    await cur.close()
 
     async def inspect_panel(self, run_id: str, browser: str, panel: str, args: dict[str, Any] | None = None) -> dict[str, Any]:
         """Targeted on-demand DevTools panel inspection on the granted browser."""
         sess = self.sessions.get_session(run_id)
+        if panel not in ALL_PANELS and not any(
+            k in panel.lower() for k in ("element", "console", "issue", "network", "security", "application", "performance", "render", "sensor")
+        ):
+            raise ValueError(f"Unknown panel {panel!r}; valid panels: {ALL_PANELS}")
         policy: AccessPolicy = sess["policy"]
         run_dir = Path(sess["run_dir"])
         vault = EvidenceVault(run_dir)
-        by_name = {b.name: b for b in discover_browsers()}
+        transcript = TranscriptLogger(run_dir)
+        answers = sess.get("answers", {})
+        overrides = {
+            k.removesuffix("_path").lower(): str(v)
+            for k, v in answers.items()
+            if k.endswith("_path") and v and k != "project_path"
+        }
+        by_name = {b.name: b for b in discover_browsers(overrides=overrides)}
         if browser not in by_name or not by_name[browser].found:
             raise FileNotFoundError(f"Browser '{browser}' not found on host.")
 
@@ -226,17 +302,27 @@ class SiteAuditCoordinator:
         cursor = await BrowserCursor.launch(browser_name=browser, executable=by_name[browser].executable, headless=True)
         try:
             assert cursor.cdp is not None
+            await enable_base_domains(cursor.cdp)
             await cursor.navigate(target_url, policy=policy)
             p_low = panel.lower()
             if "element" in p_low:
-                return await collect_elements(cursor.cdp, vault, target_url, browser)
-            if "console" in p_low or "issue" in p_low:
-                return collect_console_and_issues(cursor.cdp, vault, target_url, browser)
-            if "network" in p_low or "security" in p_low:
-                return collect_network_and_security(cursor.cdp, vault, target_url, browser)
-            if "application" in p_low:
-                return await collect_application(cursor.cdp, vault, target_url, browser)
-            return await collect_performance_rendering_sensors(cursor.cdp, vault, target_url, browser)
+                res = await collect_elements(cursor.cdp, vault, target_url, browser)
+            elif "console" in p_low or "issue" in p_low:
+                res = collect_console_and_issues(cursor.cdp, vault, target_url, browser)
+            elif "network" in p_low or "security" in p_low:
+                res = collect_network_and_security(cursor.cdp, vault, target_url, browser)
+            elif "application" in p_low:
+                res = await collect_application(cursor.cdp, vault, target_url, browser)
+            else:
+                res = await collect_performance_rendering_sensors(cursor.cdp, vault, target_url, browser)
+            transcript.log(
+                agent="inspect_panel",
+                cursor=cursor.cursor_name,
+                tool=f"panel.{panel}",
+                args={"url": target_url},
+                result_bytes=json.dumps({"evidence_id": res.get("evidence_id"), "findings": len(res.get("findings", []))}),
+            )
+            return res
         finally:
             await cursor.close()
 
