@@ -50,3 +50,19 @@ The evaluator currently supplies no measured mutation score. Formula tests do no
 The [ledger](../src/bugarena/audit/ledger.py) distinguishes states and evidence levels. [Verification](../src/bugarena/audit/verify.py) and [deduplication](../src/bugarena/audit/dedupe.py) support review. With `auto_generate=false`, roles use offline detectors. With generation enabled, role output is schema-validated.
 
 Area coverage means the engine tracked examination of repository areas. It is **not** statement/branch test coverage, a completeness guarantee, or proof that no bugs remain. Offline detectors include project-specific checks; broad performance on other projects remains unbenchmarked.
+
+## BugArena MCP v2 Subsystems
+
+| Package | Responsibility |
+| --- | --- |
+| `truth` | Append-only SHA-256 hash-chained `EvidenceVault` (`manifest.jsonl`, `redactions.json`), `ClaimLedger`, `CitationChecker`, `CorrectionLog`, `AgentScoreboard` (`.bugarena/agent_scores.json`) |
+| `browser` | Chromium discovery (`chrome`, `brave`, `helium`), isolated `--user-data-dir` launcher, stdlib RFC 6455 CDP client, capability-scoped `[mcp_<browser>]` cursors, authorization gate & questionnaire |
+| `inspect` | 14 DevTools collectors (`DOM`, `Runtime`/`Log`, `Audits`, `Debugger`/`Profiler`, `Network`, `Performance`, `HeapProfiler`, `Storage`, `Security`, `Overlay`/`LayerTree`, `Emulation`, `Input`, cross-browser diff) + `coverage_matrix.md` |
+| `linking` | VLQ source-map parser linking production JS stack frames to local source `file:line` (`site_only` / `project_only` / `linked`) |
+| `verify` | Self-contained `verify/` pack (`verify.py` stdlib-only SHA-256, chain, schema, quote & count checker, `claims.json`, `VERIFY_PROMPT.md`) |
+| `skills_merge` | Quarantined `merge_both_skills` pipeline: AST security scan, permission manifest, dependency compat dry-run, isolated smoke test, adapter registry preserving BugArena as primary |
+
+### Data Flow & Trust Boundaries
+1. **Pre-Start Gate:** `session_prepare` -> questionnaire -> `session_confirm` issues a scoped token and forces passive mode whenever authorization is `neither`.
+2. **Isolated Cursors:** Each browser runs in a dedicated temp profile on loopback `127.0.0.1` via CDP only (zero OS mouse/keyboard input).
+3. **Truth Gate:** Raw outputs enter `EvidenceVault` -> citations verified against stored artifacts -> independent `verifier` replay + `honesty-auditor` pass -> only `CONFIRMED` findings with intact hashes reach `REPORT.md` / `REPORT.pdf`.

@@ -1,9 +1,9 @@
 # BugArena MCP — Project & Audit Report
 
-- **Generated (UTC):** `2026-11-26T11:20:22+00:00`
+- **Generated (UTC):** `2026-11-26T11:23:02+00:00`
 - **Repository:** `MCP server`
-- **Branch / HEAD:** `upgrade/bugarena-agents` @ `ab6765d`
-- **Tracked Files:** `132` across `17` audited areas
+- **Branch / HEAD:** `upgrade/bugarena-agents` @ `7e95e91`
+- **Tracked Files:** `136` across `17` audited areas
 - **Auto-Update Trigger:** `.githooks/pre-commit` + `scripts/update_project_report.py` + `AGENTS.md`
 
 ## Audit Verdict
@@ -11,13 +11,13 @@
 - **Audit Engine Summary:** `ROUND 1 | new: 0 | confirmed: 0 | dismissed: 0 | fixed: 0 | open: 0`
 - **Module Coverage:** `100.0%` (`100.0%` statically read)
 - **Open Confirmed Bugs:** `0` | **Dismissed:** `0` | **Unverified:** `0`
-- **Historical Ledger & Fix History:** `75` reconciled fixes (`39` `fix(...)` commits in git history; `2` prior dismissed)
+- **Historical Ledger & Fix History:** `75` reconciled fixes (`40` `fix(...)` commits in git history; `2` prior dismissed)
 
 ## Verification Status
 | Check | Result | Details |
 | :--- | :--- | :--- |
 | `ruff check src tests scripts` | **PASS (0 issues)** | `All checks passed!` |
-| `pytest -q -m "not slow and not browser"` | **PASS (114 passed, 2 deselected in 34.38s)** | `Isolated unit + regression suites` |
+| `pytest -q -m "not slow and not browser"` | **PASS (114 passed, 2 deselected in 26.24s)** | `Isolated unit + regression suites` |
 | `LoopOperator` Read-Only Audit | **PASS** | `17 areas, 0 open confirmed` |
 
 ## MCP Tools
@@ -46,7 +46,7 @@ Total registered tools: **13**
 | `audit` | 12 | YES | YES | - |
 | `config` | 1 | YES | YES | - |
 | `discovery` | 4 | YES | YES | - |
-| `docs` | 13 | YES | YES | - |
+| `docs` | 17 | YES | YES | - |
 | `evaluation` | 4 | YES | YES | - |
 | `models` | 6 | YES | YES | - |
 | `packaging` | 4 | YES | YES | - |
@@ -64,6 +64,7 @@ Total registered tools: **13**
 No open audit findings detected in the current codebase.
 
 ## Recent Changes
+- `7e95e91 fix(phase0): reconcile state, enforce real coverage, add tool descriptions & pytest markers`
 - `ab6765d docs: reconcile README, CONTRIBUTING, docs/, and historical report gitignore`
 - `29f57e3 feat(reporting): add audited PROJECT_REPORT.md generator and pre-commit hook`
 - `e3c026e fix(audit): preserve leading dotfiles in classify_area and guard post-fix detectors`
@@ -75,21 +76,15 @@ No open audit findings detected in the current codebase.
 - `9569200 fix(ECC-036): add check_api_keys --dry-run, JSON guard, and portable path hint`
 - `30eafc2 fix(ECC-007): add personas __init__ and complete reporting exports`
 - `bd347de fix(ECC-006): declare httpx>=0.27.0 in project dependencies`
-- `d3f5e6e fix(ECC-017): expand sandbox ignore patterns, symlink safety, and read-only cleanup`
 
 ## Working Tree Snapshot (`git status --short`)
 ```text
-M  .githooks/pre-commit
- M PROJECT_REPORT.md
-A  docs/STATE_VERIFICATION.md
-A  docs/TOOLING_AVAILABLE.md
-M  pyproject.toml
-M  scripts/update_project_report.py
-M  src/bugarena/audit/coverage.py
-M  src/bugarena/server.py
-M  tests/regression/test_ecc_014_033_report_tail.py
-A  tests/unit/test_phase0_fixes.py
-M  tests/unit/test_project_report.py
+A  docs/DEVIATIONS.md
+A  docs/PLAN.md
+A  docs/REQUIREMENTS_TRACE.md
+A  docs/THREAT_MODEL.md
+M  docs/architecture.md
+M  tests/unit/test_phase0_fixes.py
 ```
 
 ## How This Report Stays Updated

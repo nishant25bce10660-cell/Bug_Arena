@@ -46,8 +46,12 @@ def test_pyproject_declares_slow_and_browser_markers():
 def test_docs_and_contributing_guide_files_exist_and_non_empty():
     expected_docs = (
         "CONTRIBUTING.md",
+        "docs/DEVIATIONS.md",
+        "docs/PLAN.md",
         "docs/README.md",
+        "docs/REQUIREMENTS_TRACE.md",
         "docs/STATE_VERIFICATION.md",
+        "docs/THREAT_MODEL.md",
         "docs/TOOLING_AVAILABLE.md",
         "docs/architecture.md",
         "docs/configuration.md",

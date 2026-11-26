@@ -1,0 +1,12 @@
+# BugArena MCP v2 Threat Model (Section 4)
+
+## 1. Trust Boundaries
+
+| Boundary | Untrusted Input / Actor | Mitigation Enforced in Code |
+| :--- | :--- | :--- |
+| **Site Target** | Third-party website HTML, JS, DOM, headers, cookies, console logs, HARs | Questionnaire + `session_confirm` authorization gate (`own`/`written_permission`/`neither`). Without explicit ownership/permission, forced passive mode blocks form fills/fuzzing, honors `robots.txt`, and rate-limits `<= 2 req/s`. Prompt builders wrap all captured text with untrusted-data framing and adaptive code fences. |
+| **Browser Isolation** | MCP browser sessions vs. user's real desktop & daily browser profiles | Fresh temporary `--user-data-dir` + loopback `127.0.0.1` ephemeral debug port (`--remote-debugging-port=0`). Existing profiles are opt-in only and never default. Cursor capability tokens bind each `[mcp_<browser>]` worker to its own port/PID. OS-level input (`pyautogui`, `pynput`, `ctypes` mouse/kbd, `SendInput`) is banned everywhere. |
+| **Evidence & Reports** | LLM agent outputs, screenshots, HAR headers, file paths | Only `EvidenceVault` writes `evidence/raw/*` + SHA-256 chained `manifest.jsonl`. `scrub_sensitive_data` + HAR/header scrubber strip cookies, Bearer tokens, `Authorization`, API keys, emails, and PII, logging removals in `redactions.json`. `validate_safe_path` enforces output confinement. |
+| **LLM Truth & Calibration** | LLM agent claims, severity labels, quoted text/numbers | `ClaimLedger` requires >=1 `evidence_refs`. `CitationChecker` verifies every quote/number exists in the cited artifact. Code severity rubric forbids `Critical` for `STATIC` evidence. `verifier` + `honesty-auditor` replay and challenge claims independently. |
+| **Merged Third-Party Skills** | External skill path, git URL, or archive passed to `merge_both_skills` | Read-only quarantine intake; AST + pattern static security scan (`eval`, `exec`, `os.system`, `subprocess`, `ctypes`, outbound network, install hooks, outside writes) produces a permission manifest before any execution. Colliding tools are namespaced `<skill>__<tool>`; BugArena tools remain immutable primary entries. |
+| **Secrets & API Keys** | `.env`, host environment, `GEMINI_API_KEY`, `XAI_API_KEY`, `GROQ_API_KEY` | Loaded strictly from explicit env / project `.env` (never from arbitrary scanned repos); masked in `sanitize_env` / `scrub_sensitive_data`; never echoed in transcripts, `REPORT.md`, `REPORT.pdf`, or `verify/`. |
