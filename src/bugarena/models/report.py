@@ -9,7 +9,7 @@ from bugarena.models.tournament import PatchEvaluation
 class FixReport(BaseModel):
     """Actionable fix report returned to client or user."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     tournament_id: str
     champion_patch: CandidatePatch | None = None

@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class ExecutionOutcome(BaseModel):
     """Represents the execution result of running a test or command."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     exit_code: int
     stdout: str
@@ -18,7 +18,7 @@ class ExecutionOutcome(BaseModel):
 class ReproTestSpec(BaseModel):
     """Specification of a synthesized reproduction test case."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     test_file_path: str
     test_code: str
