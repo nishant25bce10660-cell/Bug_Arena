@@ -55,26 +55,35 @@ Rather than trusting a single LLM patch proposal, BugArena executes a rigorous 5
 | :--- | :--- | :--- |
 | `bug_detect` | Locates suspect lines & AST scopes from stack traces | `repo_path`, `error_log`, `hint` |
 | `bug_reproduce` | Synthesizes and asserts a failing reproduction test | `repo_path`, `suspect_file`, `bug_description`, `call_expr`, `expected_behavior` |
-| `agent_fix_tournament` | Registers and validates competing agent candidate patches | `repo_path`, `repro_test_file`, `candidate_patches_raw` |
-| `evaluate_patches` | Executes sandbox verification, regression checks, and scores patches | `repo_path`, `tournament_id`, `repro_test_file`, `repro_code` |
+| `agent_fix_tournament` | Registers and validates competing agent candidate patches (with optional LLM dispatch) | `repo_path`, `repro_test_file`, `candidate_patches_raw`, `auto_generate` |
+| `evaluate_patches` | Executes sandbox verification, regression checks, AST delta, and scores patches | `repo_path`, `tournament_id`, `repro_test_file`, `repro_code` |
 | `generate_fix_report` | Formats tournament leaderboard, markdown report, or git unified diff | `tournament_id`, `format` (`markdown`, `json`, `diff`) |
+| `generate_bug_report` | Generates and saves a standalone bug diagnostic markdown report | `repo_path`, `error_log`, `hint`, `output_file` |
 | `bugarena_autonomous_repair` | Composite end-to-end autonomous repair workflow | `repo_path`, `error_log`, `bug_description`, `candidate_patches_raw` |
+| `audit_start` | Initializes a read-only multi-agent audit run and module coverage matrix | `repo_path`, `mode`, `max_rounds` |
+| `audit_round` | Executes one parallel specialist detection, deduplication, and probe round | `run_id`, `auto_generate` |
+| `audit_status` | Returns round ledger counts, module coverage %, and stop-condition status | `run_id` |
+| `finding_verify` | Runs independent adversarial verification on an audit finding | `run_id`, `finding_id` |
+| `audit_report` | Renders evidence-graded audit report markdown with root-cause clusters and appendices | `run_id`, `format`, `output_file` |
+| `fix_loop_start` | Executes test-first remediation across confirmed findings in an audit ledger | `run_id`, `dry_run`, `auto_generate` |
 
 ---
 
 ## Scoring & Gating Formula
 
 Candidate patches undergo **Hard Disqualification Gating**:
-1. **Red-to-Green Gate**: Reproduction test must pass.
+1. **Red-to-Green Gate**: Reproduction test must fail on baseline (`exit_code == 1`) and pass after patch.
 2. **Zero Regression Gate**: Regressions count in existing test suites must be 0.
-3. **Syntax & AST Gate**: Patch must produce valid, parsable syntax.
+3. **Syntax & AST Gate**: Modified Python files must produce valid, parsable AST syntax without path traversal.
 
 For non-disqualified patches, composite accuracy score $S(p) \in [0, 100]$ is computed as:
-$$S(p) = 40 \cdot R(p) + 30 \cdot (1 - \text{regressions}/\text{total}) + 15 \cdot Q_{\text{churn}}(p) + 10 \cdot Q_{\text{complexity}}(p) + 5 \cdot Q_{\text{mutation}}(p)$$
+$$S(p) = 40 \cdot R(p) + 30 \cdot Q_{\text{reg}}(p) + 15 \cdot Q_{\text{churn}}(p) + 10 \cdot Q_{\text{complexity}}(p) + 5 \cdot Q_{\text{mutation}}(p)$$
 
 Where:
+- $Q_{\text{reg}} = 1 - \text{regressions}/\text{total}$ when $\text{total\_regressions\_checked} > 0$, else $0$
 - $Q_{\text{churn}} = \max(0, 1 - \text{lines\_changed}/50)$ (rewards surgical fixes)
 - $Q_{\text{complexity}} = \max(0, 1 - \max(0, \Delta CC)/10)$ (rewards algorithmic simplicity)
+- $Q_{\text{mutation}} = \text{mutation\_kill\_ratio}$ when measured, else $0$
 
 ---
 
@@ -111,7 +120,7 @@ Add the server to your `claude_desktop_config.json` or Cursor MCP settings:
 {
   "mcpServers": {
     "bugarena": {
-      "command": "D:/MCP server/.venv/Scripts/python.exe",
+      "command": "<path-to-repo>/.venv/Scripts/python.exe",
       "args": ["-m", "bugarena.server"]
     }
   }
