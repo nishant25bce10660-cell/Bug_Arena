@@ -1,0 +1,59 @@
+{
+  "tournament_id": "tourn_98514986",
+  "champion_candidate_id": "cand_bug020_surgical",
+  "evaluations": [
+    {
+      "candidate_id": "cand_bug020_surgical",
+      "persona": "surgical_minimalist",
+      "repro_passed": true,
+      "regressions_count": 0,
+      "total_regressions_checked": 1,
+      "diff_churn": 5,
+      "cyclomatic_delta": 0,
+      "mutation_kill_ratio": null,
+      "score": 98.5,
+      "disqualified": false,
+      "disqualification_reason": null
+    },
+    {
+      "candidate_id": "cand_bug020_contract",
+      "persona": "contract_enforcer",
+      "repro_passed": true,
+      "regressions_count": 0,
+      "total_regressions_checked": 1,
+      "diff_churn": 7,
+      "cyclomatic_delta": 0,
+      "mutation_kill_ratio": null,
+      "score": 97.9,
+      "disqualified": false,
+      "disqualification_reason": null
+    },
+    {
+      "candidate_id": "cand_bug020_defensive",
+      "persona": "defensive_guardian",
+      "repro_passed": true,
+      "regressions_count": 0,
+      "total_regressions_checked": 1,
+      "diff_churn": 9,
+      "cyclomatic_delta": 0,
+      "mutation_kill_ratio": null,
+      "score": 97.3,
+      "disqualified": false,
+      "disqualification_reason": null
+    },
+    {
+      "candidate_id": "cand_bug020_architectural",
+      "persona": "architectural_fixer",
+      "repro_passed": true,
+      "regressions_count": 0,
+      "total_regressions_checked": 1,
+      "diff_churn": 9,
+      "cyclomatic_delta": 0,
+      "mutation_kill_ratio": null,
+      "score": 97.3,
+      "disqualified": false,
+      "disqualification_reason": null
+    }
+  ],
+  "champion_diff": "--- a/src/bugarena/reporting/markdown_formatter.py\n+++ b/src/bugarena/reporting/markdown_formatter.py\n@@ -45,3 +45,3 @@\n             lines.append(\n-                f\"| `{s.file_path}` | `{s.function_name}` | {line_str} | `{s.bug_type}` | {conf_pct} | {s.reasoning} |\"\n+                f\"| `{s.file_path}` | `{s.function_name}` | {line_str} | `{s.bug_type}` | {conf_pct} | {s.reasoning.replace('|', '\\\\|').replace(chr(10), ' ')} |\"\n             )\n@@ -136,4 +136,5 @@\n \n+        reason_note = f\" ({ev.disqualification_reason})\" if ev.disqualified and ev.disqualification_reason else \"\"\n         lines.append(\n-            f\"| {idx} | `{ev.candidate_id}` | {persona_str} | {repro_str} | {ev.regressions_count} | {ev.diff_churn} | {ev.cyclomatic_delta} | **{ev.score:.1f}** | `{status_str}` |\"\n+            f\"| {idx} | `{ev.candidate_id}` | {persona_str} | {repro_str} | {ev.regressions_count} | {ev.diff_churn} | {ev.cyclomatic_delta} | **{ev.score:.1f}** | `{status_str}`{reason_note} |\"\n         )"
+}

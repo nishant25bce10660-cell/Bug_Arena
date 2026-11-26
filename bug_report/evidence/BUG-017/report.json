@@ -1,0 +1,59 @@
+{
+  "tournament_id": "tourn_028aae5d",
+  "champion_candidate_id": "cand_bug017_surgical",
+  "evaluations": [
+    {
+      "candidate_id": "cand_bug017_surgical",
+      "persona": "surgical_minimalist",
+      "repro_passed": true,
+      "regressions_count": 0,
+      "total_regressions_checked": 1,
+      "diff_churn": 14,
+      "cyclomatic_delta": 0,
+      "mutation_kill_ratio": null,
+      "score": 95.8,
+      "disqualified": false,
+      "disqualification_reason": null
+    },
+    {
+      "candidate_id": "cand_bug017_contract",
+      "persona": "contract_enforcer",
+      "repro_passed": true,
+      "regressions_count": 0,
+      "total_regressions_checked": 1,
+      "diff_churn": 14,
+      "cyclomatic_delta": 0,
+      "mutation_kill_ratio": null,
+      "score": 95.8,
+      "disqualified": false,
+      "disqualification_reason": null
+    },
+    {
+      "candidate_id": "cand_bug017_architectural",
+      "persona": "architectural_fixer",
+      "repro_passed": true,
+      "regressions_count": 0,
+      "total_regressions_checked": 1,
+      "diff_churn": 16,
+      "cyclomatic_delta": 0,
+      "mutation_kill_ratio": null,
+      "score": 95.2,
+      "disqualified": false,
+      "disqualification_reason": null
+    },
+    {
+      "candidate_id": "cand_bug017_defensive",
+      "persona": "defensive_guardian",
+      "repro_passed": true,
+      "regressions_count": 0,
+      "total_regressions_checked": 1,
+      "diff_churn": 17,
+      "cyclomatic_delta": 0,
+      "mutation_kill_ratio": null,
+      "score": 94.9,
+      "disqualified": false,
+      "disqualification_reason": null
+    }
+  ],
+  "champion_diff": "--- a/src/bugarena/server.py\n+++ b/src/bugarena/server.py\n@@ -37,2 +37,3 @@\n _REPRO_REGISTRY: OrderedDict[str, ReproTestSpec] = OrderedDict()\n+_REPRO_REPO_MAP: dict[str, str] = {}\n _BUG_REGISTRY: OrderedDict[str, BugSpec] = OrderedDict()\n@@ -47,5 +48,7 @@\n \n-def _store_repro(test_rel_path: str, spec: ReproTestSpec) -> None:\n+def _store_repro(test_rel_path: str, spec: ReproTestSpec, repo_path: str = \"\") -> None:\n     with _REGISTRY_LOCK:\n         _REPRO_REGISTRY[test_rel_path] = spec\n+        if repo_path:\n+            _REPRO_REPO_MAP[test_rel_path] = str(Path(repo_path).resolve())\n         if len(_REPRO_REGISTRY) > MAX_REGISTRY_SIZE:\n@@ -125,3 +128,3 @@\n         )\n-        _store_repro(test_rel_path, spec)\n+        _store_repro(test_rel_path, spec, repo_path=repo_path)\n         return {\n@@ -331,5 +334,6 @@\n     repro_spec = None\n-    with _REGISTRY_LOCK:\n-        for r in _REPRO_REGISTRY.values():\n-            if r.test_file_path.startswith(repo_path) or repo_path in r.test_file_path:\n+    resolved_repo = str(Path(repo_path).resolve())\n+    with _REGISTRY_LOCK:\n+        for key, r in reversed(list(_REPRO_REGISTRY.items())):\n+            if _REPRO_REPO_MAP.get(key) == resolved_repo or r.test_file_path.startswith(repo_path):\n                 repro_spec = r"
+}

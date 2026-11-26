@@ -1,0 +1,7 @@
+--- a/src/bugarena/discovery/ast_analyzer.py
++++ b/src/bugarena/discovery/ast_analyzer.py
+@@ -91,2 +91,4 @@
+     # If line is outside functions (e.g. top-level module code)
++    if not lines:
++        return ASTSliceInfo(function_name="<module>", class_name=None, line_range=(1, 1), code_snippet="", docstring=None)
+     start = max(1, min(target_line - 5, len(lines)))

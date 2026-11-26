@@ -1,0 +1,14 @@
+--- a/src/bugarena/tournament/runner.py
++++ b/src/bugarena/tournament/runner.py
+@@ -29,10 +29,3 @@
+     ):
+-        self.personas = list(
+-            personas
+-            or [
+-                PersonaType.SURGICAL_MINIMALIST,
+-                PersonaType.DEFENSIVE_GUARDIAN,
+-                PersonaType.ARCHITECTURAL_FIXER,
+-            ]
+-        )
++        self.personas = list(PersonaType) if personas is None else list(personas)
+         self.dispatcher = MultiModelDispatcher()

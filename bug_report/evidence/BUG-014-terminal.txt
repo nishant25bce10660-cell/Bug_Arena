@@ -1,0 +1,19 @@
+$ python -m pytest tests/repro/test_bug-014.py -q
+EXIT: 1
+F                                                                        [100%]
+================================== FAILURES ===================================
+__________________ test_reproduction_parse_python_traceback ___________________
+
+    def test_reproduction_parse_python_traceback():
+        """Reproduce defect: parse_python_traceback drops <lambda> scope to <module> and misparses trailing colon lines as exception messages"""
+>       assert (lambda ts: len(ts) == 1 and ts[0].function_name == '<lambda>' and ts[0].error_message == 'ZeroDivisionError: division by zero')(parse_python_traceback('Traceback (most recent call last):\n  File "a.py", line 1, in <lambda>\n    f = lambda: 1/0\nZeroDivisionError: division by zero\nNote: see docs')) == True
+E       assert False == True
+E        +  where False = <function test_reproduction_parse_python_traceback.<locals>.<lambda> at 0x0000021A157DDB10>([FaultTrace(file_path='a.py', line_number=1, function_name='<module>', code='f = lambda: 1/0', error_message='Note: see docs')])
+E        +    where [FaultTrace(file_path='a.py', line_number=1, function_name='<module>', code='f = lambda: 1/0', error_message='Note: see docs')] = parse_python_traceback('Traceback (most recent call last):\n  File "a.py", line 1, in <lambda>\n    f = lambda: 1/0\nZeroDivisionError: division by zero\nNote: see docs')
+
+tests\repro\test_bug-014.py:28: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/repro/test_bug-014.py::test_reproduction_parse_python_traceback
+1 failed in 0.88s
+
+

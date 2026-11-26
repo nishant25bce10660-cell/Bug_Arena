@@ -1,0 +1,19 @@
+$ python -m pytest tests/repro/test_bug-002.py -q
+EXIT: 1
+F                                                                        [100%]
+================================== FAILURES ===================================
+______________ test_reproduction_generate_reproduction_test_code ______________
+
+    def test_reproduction_generate_reproduction_test_code():
+        """Reproduce defect: generate_reproduction_test_code fails with SyntaxError on 'assert ' prefix and silently drops non-'==' comparisons"""
+>       assert (('x != 0' in generate_reproduction_test_code(SuspectLocation(file_path='a.py', function_name='f', line_range=(1, 1), confidence=0.9, bug_type='E', reasoning='r', code_snippet=''), 'd', 'f()', 'x != 0')) and ('assert f() == 1' in generate_reproduction_test_code(SuspectLocation(file_path='a.py', function_name='f', line_range=(1, 1), confidence=0.9, bug_type='E', reasoning='r', code_snippet=''), 'd', 'f()', 'assert f() == 1'))) == True
+E       assert (('x != 0' in '"""Automated bug reproduction test case.\nBug description: d\nTarget function: f in a.py\n"""\n\nimport sys\nfrom pat...ss\n\n\ndef test_reproduction_f():\n    """Reproduce defect: d"""\n    result = f()\n    assert result is not None\n\n')) == True
+E        +  where '"""Automated bug reproduction test case.\nBug description: d\nTarget function: f in a.py\n"""\n\nimport sys\nfrom pat...ss\n\n\ndef test_reproduction_f():\n    """Reproduce defect: d"""\n    result = f()\n    assert result is not None\n\n' = generate_reproduction_test_code(SuspectLocation(file_path='a.py', function_name='f', line_range=(1, 1), confidence=0.9, bug_type='E', reasoning='r', code_snippet=''), 'd', 'f()', 'x != 0')
+E        +    where SuspectLocation(file_path='a.py', function_name='f', line_range=(1, 1), confidence=0.9, bug_type='E', reasoning='r', code_snippet='') = SuspectLocation(file_path='a.py', function_name='f', line_range=(1, 1), confidence=0.9, bug_type='E', reasoning='r', code_snippet='')
+
+tests\repro\test_bug-002.py:28: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/repro/test_bug-002.py::test_reproduction_generate_reproduction_test_code
+1 failed in 1.16s
+
+

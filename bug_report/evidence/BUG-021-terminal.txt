@@ -1,0 +1,20 @@
+$ python -m pytest tests/repro/test_bug-021.py -q
+EXIT: 1
+F                                                                        [100%]
+================================== FAILURES ===================================
+_______________________ test_reproduction_load_env_file _______________________
+
+    def test_reproduction_load_env_file():
+        """Reproduce defect: load_env_file fails to strip inline '#' comments and mishandles explicit dotenv_path scope"""
+>       assert (lambda td: ((td / '.env').write_text('BA_PROBE_CFG_KEY=hello # comment\n', encoding='utf-8'), load_env_file(td / '.env'), os.environ.pop('BA_PROBE_CFG_KEY', None), __import__('shutil').rmtree(td, ignore_errors=True))[2])(Path(__import__('tempfile').mkdtemp())) == 'hello'
+E       AssertionError: assert 'hello # comment' == 'hello'
+E         
+E         - hello
+E         + hello # comment
+
+tests\repro\test_bug-021.py:28: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/repro/test_bug-021.py::test_reproduction_load_env_file - Asserti...
+1 failed in 0.76s
+
+

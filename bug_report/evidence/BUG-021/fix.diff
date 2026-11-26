@@ -1,0 +1,31 @@
+--- a/src/bugarena/config.py
++++ b/src/bugarena/config.py
+@@ -13,10 +13,9 @@
+     if dotenv_path:
+-        candidates.append(Path(dotenv_path).resolve())
+-
+-    # Candidate 1: BugArena project root directory (d:/MCP server/.env)
+-    candidates.append(Path(__file__).resolve().parent.parent.parent / ".env")
+-    # Candidate 2: Current working directory
+-    candidates.append(Path.cwd() / ".env")
+-    # Candidate 3: User home .gemini/.env
+-    candidates.append(Path.home() / ".gemini" / ".env")
++        candidates = [Path(dotenv_path).resolve()]
++    else:
++        candidates.extend([
++            Path(__file__).resolve().parent.parent.parent / ".env",
++            Path.cwd() / ".env",
++            Path.home() / ".gemini" / ".env",
++        ])
+ 
+@@ -30,4 +29,8 @@
+                     key, val = clean_line.split("=", 1)
+-                    key = key.strip()
+-                    val = val.strip().strip("'\"")
++                    key = key.strip().removeprefix("export ").strip()
++                    val = val.strip()
++                    if val and val[0] in ("'", '"') and len(val) >= 2 and val[-1] == val[0]:
++                        val = val[1:-1]
++                    elif " #" in val:
++                        val = val.split(" #", 1)[0].strip()
+                     if key and key not in os.environ:

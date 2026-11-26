@@ -1,0 +1,7 @@
+--- a/src/bugarena/synthesizer/test_generator.py
++++ b/src/bugarena/synthesizer/test_generator.py
+@@ -39,2 +39,2 @@
+-    if expected_behavior and "raises " in expected_behavior.lower():
+-        exc_name = expected_behavior.split("raises ", 1)[1].strip()
++    if expected_behavior and (m := re.search(r"\braises\s+(.+)", expected_behavior, re.IGNORECASE)):
++        exc_name = m.group(1).strip()

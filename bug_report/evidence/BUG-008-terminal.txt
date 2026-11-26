@@ -1,0 +1,22 @@
+$ python -m pytest tests/repro/test_bug-008.py -q
+EXIT: 1
+F                                                                        [100%]
+================================== FAILURES ===================================
+______________________ test_reproduction_PatchEvaluator _______________________
+
+    def test_reproduction_PatchEvaluator():
+        """Reproduce defect: PatchEvaluator fails to disqualify patches introducing SyntaxError into untested Python modules and hardcodes cyclomatic_delta=0"""
+>       assert (lambda td: ((td / 'src').mkdir(), (td / 'tests').mkdir(), (td / 'src' / 'calc.py').write_text('def add(a,b):\n return a-b\n'), (td / 'src' / 'other.py').write_text('def ok():\n return 1\n'), (td / 'tests' / 'test_ok.py').write_text('def test_ok():\n assert True\n'), PatchEvaluator(td).evaluate_candidates([CandidatePatch(candidate_id='c1', persona='surgical_minimalist', diff='--- a/src/calc.py\n+++ b/src/calc.py\n@@ -1,2 +1,2 @@\n def add(a,b):\n- return a-b\n+ return a+b\n--- a/src/other.py\n+++ b/src/other.py\n@@ -1,2 +1,2 @@\n-def ok():\n+def broken(:\n  return 1\n', explanation='x', lines_added=2, lines_deleted=2)], ReproTestSpec(test_file_path='tests/repro/test_r.py', test_code='from src.calc import add\ndef test_r():\n assert add(1,2)==3\n', red_baseline_verified=True))[0][0].disqualified, __import__('shutil').rmtree(td, ignore_errors=True))[5])(Path(__import__('tempfile').mkdtemp())) == True
+E       AssertionError: assert False == True
+E        +  where False = <function test_reproduction_PatchEvaluator.<locals>.<lambda> at 0x000002660E19A610>(WindowsPath('C:[REDACTED_PATH]/AppData/Local/Temp/tmpn48h9x91'))
+E        +    where WindowsPath('C:[REDACTED_PATH]/AppData/Local/Temp/tmpn48h9x91') = Path('C:\\Users\\nisha\\AppData\\Local\\Temp\\tmpn48h9x91')
+E        +      where 'C:\\Users\\nisha\\AppData\\Local\\Temp\\tmpn48h9x91' = <function mkdtemp at 0x000002660B618A90>()
+E        +        where <function mkdtemp at 0x000002660B618A90> = <module 'tempfile' from 'C:\\Users\\nisha\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\tempfile.py'>.mkdtemp
+E        +          where <module 'tempfile' from 'C:\\Users\\nisha\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\tempfile.py'> = __import__('tempfile')
+
+tests\repro\test_bug-008.py:28: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/repro/test_bug-008.py::test_reproduction_PatchEvaluator - Assert...
+1 failed in 1.54s
+
+

@@ -1,0 +1,611 @@
+﻿=== ROUND 6 FINAL VERIFICATION & GIT CLEANLINESS PROOF ===
+Timestamp: 2026-11-25T18:55:51.6148407+05:30
+
+--- git rev-parse HEAD & branch ---
+46acbdee6cba97f74341636adc72794fc437bd87
+main
+
+--- git status ---
+On branch main
+Your branch is ahead of 'origin/main' by 2 commits.
+  (use "git push" to publish your local commits)
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	bug-report/
+	bug_report/
+
+nothing added to commit but untracked files present (use "git add" to track)
+
+--- git diff --stat ---
+<EMPTY (0 tracked files modified)>
+
+--- git ls-files count ---
+Tracked files: 49
+
+--- ruff check . ---
+I001 [*] Import block is un-sorted or un-formatted
+ --> bug_report\evidence\debug_5_7_8.py:1:1
+  |
+1 | / import sys
+2 | | from pathlib import Path
+3 | | from bugarena.sandbox.manager import EphemeralSandboxManager
+4 | | from bugarena.sandbox.runner import run_sandboxed_command
+  | |_________________________________________________________^
+5 |
+6 |   mgr = EphemeralSandboxManager(".")
+  |
+help: Organize imports
+  |
+2 | from pathlib import Path
+3 +
+4 | from bugarena.sandbox.manager import EphemeralSandboxManager
+  |
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> bug_report\evidence\gen_patches.py:3:1
+   |
+ 1 |   """Generate exact unified diffs via difflib and verify locally in EphemeralSandboxManager."""
+ 2 |
+ 3 | / import ast
+ 4 | | import difflib
+ 5 | | import json
+ 6 | | import sys
+ 7 | | from pathlib import Path
+ 8 | |
+ 9 | | from bugarena.sandbox.manager import EphemeralSandboxManager
+10 | | from bugarena.sandbox.runner import run_sandboxed_command
+11 | | from bugarena.tournament.patch_parser import parse_and_validate_patch
+12 | | from bugarena.models.agent import PersonaType
+   | |_____________________________________________^
+help: Organize imports
+   |
+8  |
+9  + from bugarena.models.agent import PersonaType
+10 | from bugarena.sandbox.manager import EphemeralSandboxManager
+11 | from bugarena.sandbox.runner import run_sandboxed_command
+12 | from bugarena.tournament.patch_parser import parse_and_validate_patch
+   - from bugarena.models.agent import PersonaType
+13 |
+   |
+
+F401 [*] `json` imported but unused
+ --> bug_report\evidence\phase1_probe.py:4:8
+  |
+3 | import asyncio
+4 | import json
+  |        ^^^^
+5 | import os
+6 | import sys
+  |
+help: Remove unused import: `json`
+  |
+3 | import asyncio
+  - import json
+4 | import os
+  |
+
+F401 [*] `sys` imported but unused
+ --> bug_report\evidence\phase1_probe.py:6:8
+  |
+4 | import json
+5 | import os
+6 | import sys
+  |        ^^^
+7 | import tempfile
+8 | import traceback
+  |
+help: Remove unused import: `sys`
+  |
+5 | import os
+  - import sys
+6 | import tempfile
+  |
+
+F401 [*] `bugarena.reporting.markdown_formatter.format_markdown_report` imported but unused
+  --> bug_report\evidence\phase1_probe.py:19:51
+   |
+17 | from bugarena.models.bug import BugSpec, SuspectLocation
+18 | from bugarena.models.repro import ReproTestSpec
+19 | from bugarena.reporting.markdown_formatter import format_markdown_report
+   |                                                   ^^^^^^^^^^^^^^^^^^^^^^
+20 | from bugarena.sandbox.manager import EphemeralSandboxManager
+21 | from bugarena.sandbox.security import scrub_sensitive_data, validate_safe_path
+   |
+help: Remove unused import: `bugarena.reporting.markdown_formatter.format_markdown_report`
+   |
+18 | from bugarena.models.repro import ReproTestSpec
+   - from bugarena.reporting.markdown_formatter import format_markdown_report
+19 | from bugarena.sandbox.manager import EphemeralSandboxManager
+   |
+
+BLE001 Do not catch blind exception: `Exception`
+  --> bug_report\evidence\phase1_probe.py:44:12
+   |
+42 |         res = fn()
+43 |         print("RESULT:", res)
+44 |     except Exception:
+   |            ^^^^^^^^^
+45 |         print("EXCEPTION TRACEBACK:")
+46 |         traceback.print_exc()
+   |
+
+F841 Local variable `ev` is assigned to but never used
+   --> bug_report\evidence\phase1_probe.py:354:9
+    |
+352 |             ],
+353 |         )
+354 |         ev = evaluate_patches(
+    |         ^^
+355 |             repo_path=str(repo),
+356 |             tournament_id=tourn["tournament_id"],
+    |
+help: Remove assignment to unused variable `ev`
+    |
+353 |         )
+    -         ev = evaluate_patches(
+354 +         evaluate_patches(
+355 |             repo_path=str(repo),
+    |
+note: This is an unsafe fix and may change runtime behavior
+
+F401 [*] `pytest` imported but unused
+  --> bug_report\evidence\repro\BUG-001_repro.py:9:8
+   |
+ 7 | from pathlib import Path
+ 8 |
+ 9 | import pytest
+   |        ^^^^^^
+10 |
+11 | # Ensure workspace root is in sys.path
+   |
+help: Remove unused import: `pytest`
+  |
+8 |
+  - import pytest
+9 |
+  |
+
+F401 [*] `pytest` imported but unused
+  --> bug_report\evidence\repro\BUG-002_repro.py:9:8
+   |
+ 7 | from pathlib import Path
+ 8 |
+ 9 | import pytest
+   |        ^^^^^^
+10 |
+11 | # Ensure workspace root is in sys.path
+   |
+help: Remove unused import: `pytest`
+  |
+8 |
+  - import pytest
+9 |
+  |
+
+PLC3002 Lambda expression called directly. Execute the expression inline instead.
+  --> bug_report\evidence\repro\BUG-003_repro.py:29:9
+   |
+27 | … """Reproduce defect: validate_red_baseline marks non-buggy src-layout repo as REPRODUCED_RED due to ImportError/NameError instead of ReproductionFalsePositiveError"""
+28 | … with pytest.raises(ReproductionFalsePositiveError):
+29 | …     (lambda td: ((td / 'src' / 'pkg').mkdir(paren…ue)))(Path(__import__('tempfile').mkdtemp()))
+   |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^…^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+F401 [*] `pytest` imported but unused
+  --> bug_report\evidence\repro\BUG-004_repro.py:9:8
+   |
+ 7 | from pathlib import Path
+ 8 |
+ 9 | import pytest
+   |        ^^^^^^
+10 |
+11 | # Ensure workspace root is in sys.path
+   |
+help: Remove unused import: `pytest`
+  |
+8 |
+  - import pytest
+9 |
+  |
+
+F401 [*] `pytest` imported but unused
+  --> bug_report\evidence\repro\BUG-005_repro.py:9:8
+   |
+ 7 | from pathlib import Path
+ 8 |
+ 9 | import pytest
+   |        ^^^^^^
+10 |
+11 | # Ensure workspace root is in sys.path
+   |
+help: Remove unused import: `pytest`
+  |
+8 |
+  - import pytest
+9 |
+  |
+
+PLC3002 Lambda expression called directly. Execute the expression inline instead.
+  --> bug_report\evidence\repro\BUG-005_repro.py:28:12
+   |
+26 | …st_reproduction_EphemeralSandboxManager():
+27 | …"Reproduce defect: EphemeralSandboxManager.apply_patch wipes file when deleting a line starting with '-- ' ('--- ' in unified diff)"""
+28 | …sert (lambda td: ((td / 'q.sql').write_text('-- ol…e_errors=True))[2])(Path(tempfile.mkdtemp())) == '…
+   |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^…^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+F401 [*] `pytest` imported but unused
+  --> bug_report\evidence\repro\BUG-006_repro.py:9:8
+   |
+ 7 | from pathlib import Path
+ 8 |
+ 9 | import pytest
+   |        ^^^^^^
+10 |
+11 | # Ensure workspace root is in sys.path
+   |
+help: Remove unused import: `pytest`
+  |
+8 |
+  - import pytest
+9 |
+  |
+
+PLC3002 Lambda expression called directly. Execute the expression inline instead.
+  --> bug_report\evidence\repro\BUG-006_repro.py:28:12
+   |
+26 | …st_reproduction_parse_and_validate_patch():
+27 | …"Reproduce defect: parse_and_validate_patch protected_paths check bypassed via '../' traversal and causes false positives on substring filenames"""
+28 | …sert (lambda: (__import__('pytest').raises(PatchVa…T, 'x', None, ['tests/test_src/calc.py'])))() == (…
+   |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^…^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+PLR0133 Two constants compared in a comparison, consider replacing `True == False`
+  --> bug_report\evidence\repro\BUG-006_repro.py:28:480
+   |
+26 | …
+27 | …
+28 | …, 'x', None, ['tests/test_src/calc.py'])))() == (None, None) or True == False or (parse_and_validate_patch('--- a/src/calc.py\n+++ b/…
+   |                                                                  ^^^^
+
+F401 [*] `pytest` imported but unused
+  --> bug_report\evidence\repro\BUG-007_repro.py:9:8
+   |
+ 7 | from pathlib import Path
+ 8 |
+ 9 | import pytest
+   |        ^^^^^^
+10 |
+11 | # Ensure workspace root is in sys.path
+   |
+help: Remove unused import: `pytest`
+  |
+8 |
+  - import pytest
+9 |
+  |
+
+F401 [*] `pytest` imported but unused
+  --> bug_report\evidence\repro\BUG-008_repro.py:9:8
+   |
+ 7 | from pathlib import Path
+ 8 |
+ 9 | import pytest
+   |        ^^^^^^
+10 |
+11 | # Ensure workspace root is in sys.path
+   |
+help: Remove unused import: `pytest`
+  |
+8 |
+  - import pytest
+9 |
+  |
+
+PLC3002 Lambda expression called directly. Execute the expression inline instead.
+  --> bug_report\evidence\repro\BUG-008_repro.py:28:12
+   |
+26 | …st_reproduction_PatchEvaluator():
+27 | …"Reproduce defect: PatchEvaluator fails to disqualify patches introducing SyntaxError into untested Python modules and hardcodes cyclomatic_delta=0"""
+28 | …sert (lambda td: ((td / 'src').mkdir(), (td / 'tes…)[5])(Path(__import__('tempfile').mkdtemp())) == T…
+   |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^…^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+F401 [*] `pytest` imported but unused
+  --> bug_report\evidence\repro\BUG-009_repro.py:9:8
+   |
+ 7 | from pathlib import Path
+ 8 |
+ 9 | import pytest
+   |        ^^^^^^
+10 |
+11 | # Ensure workspace root is in sys.path
+   |
+help: Remove unused import: `pytest`
+  |
+8 |
+  - import pytest
+9 |
+  |
+
+F401 [*] `pytest` imported but unused
+  --> bug_report\evidence\repro\BUG-010_repro.py:9:8
+   |
+ 7 | from pathlib import Path
+ 8 |
+ 9 | import pytest
+   |        ^^^^^^
+10 |
+11 | # Ensure workspace root is in sys.path
+   |
+help: Remove unused import: `pytest`
+  |
+8 |
+  - import pytest
+9 |
+  |
+
+PLC3002 Lambda expression called directly. Execute the expression inline instead.
+  --> bug_report\evidence\repro\BUG-010_repro.py:28:12
+   |
+26 | …st_reproduction_MultiModelDispatcher():
+27 | …"Reproduce defect: MultiModelDispatcher.generate_patch misroutes ollama/llama3.1 and ollama/gemma2 to Groq/Gemini cloud providers"""
+28 | …sert (lambda d: (setattr(d, '_call_ollama', __impo…lama/llama3.1')))[3])(MultiModelDispatcher()) == (…
+   |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^…^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+F401 [*] `pytest` imported but unused
+  --> bug_report\evidence\repro\BUG-011_repro.py:9:8
+   |
+ 7 | from pathlib import Path
+ 8 |
+ 9 | import pytest
+   |        ^^^^^^
+10 |
+11 | # Ensure workspace root is in sys.path
+   |
+help: Remove unused import: `pytest`
+  |
+8 |
+  - import pytest
+9 |
+  |
+
+F401 [*] `pytest` imported but unused
+  --> bug_report\evidence\repro\BUG-012_repro.py:9:8
+   |
+ 7 | from pathlib import Path
+ 8 |
+ 9 | import pytest
+   |        ^^^^^^
+10 |
+11 | # Ensure workspace root is in sys.path
+   |
+help: Remove unused import: `pytest`
+  |
+8 |
+  - import pytest
+9 |
+  |
+
+F401 [*] `pytest` imported but unused
+  --> bug_report\evidence\repro\BUG-013_repro.py:9:8
+   |
+ 7 | from pathlib import Path
+ 8 |
+ 9 | import pytest
+   |        ^^^^^^
+10 |
+11 | # Ensure workspace root is in sys.path
+   |
+help: Remove unused import: `pytest`
+  |
+8 |
+  - import pytest
+9 |
+  |
+
+PLC3002 Lambda expression called directly. Execute the expression inline instead.
+  --> bug_report\evidence\repro\BUG-013_repro.py:28:12
+   |
+26 | …st_reproduction_BugDiscoveryEngine():
+27 | …"Reproduce defect: BugDiscoveryEngine resolves .venv/site-packages frames via unbounded rglob across .venv"""
+28 | …sert (lambda td: ((td / '.venv' / 'Lib' / 'site-pa…)[2])(Path(__import__('tempfile').mkdtemp())) == 0
+   |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^…^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+F401 [*] `pytest` imported but unused
+  --> bug_report\evidence\repro\BUG-014_repro.py:9:8
+   |
+ 7 | from pathlib import Path
+ 8 |
+ 9 | import pytest
+   |        ^^^^^^
+10 |
+11 | # Ensure workspace root is in sys.path
+   |
+help: Remove unused import: `pytest`
+  |
+8 |
+  - import pytest
+9 |
+  |
+
+PLC3002 Lambda expression called directly. Execute the expression inline instead.
+  --> bug_report\evidence\repro\BUG-014_repro.py:28:12
+   |
+26 | …st_reproduction_parse_python_traceback():
+27 | …"Reproduce defect: parse_python_traceback drops <lambda> scope to <module> and misparses trailing colon lines as exception messages"""
+28 | …sert (lambda ts: len(ts) == 1 and ts[0].function_n…ionError: division by zero\nNote: see docs')) == T…
+   |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^…^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+F401 [*] `pytest` imported but unused
+  --> bug_report\evidence\repro\BUG-015_repro.py:9:8
+   |
+ 7 | from pathlib import Path
+ 8 |
+ 9 | import pytest
+   |        ^^^^^^
+10 |
+11 | # Ensure workspace root is in sys.path
+   |
+help: Remove unused import: `pytest`
+  |
+8 |
+  - import pytest
+9 |
+  |
+
+PLC3002 Lambda expression called directly. Execute the expression inline instead.
+  --> bug_report\evidence\repro\BUG-015_repro.py:28:12
+   |
+26 | def test_reproduction_locate_faulty_ast_slice():
+27 |     """Reproduce defect: locate_faulty_ast_slice returns inverted line_range=(1, 0) on empty files"""
+28 |     assert (lambda s: s is not None and s['line_range'][0] <= s['line_range'][1])(locate_faulty_ast_slice('', 5)) == True
+   |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+F401 [*] `pytest` imported but unused
+  --> bug_report\evidence\repro\BUG-016_repro.py:9:8
+   |
+ 7 | from pathlib import Path
+ 8 |
+ 9 | import pytest
+   |        ^^^^^^
+10 |
+11 | # Ensure workspace root is in sys.path
+   |
+help: Remove unused import: `pytest`
+  |
+8 |
+  - import pytest
+9 |
+  |
+
+PLC3002 Lambda expression called directly. Execute the expression inline instead.
+  --> bug_report\evidence\repro\BUG-016_repro.py:28:12
+   |
+26 | …st_reproduction_generate_fix_report():
+27 | …"Reproduce defect: generate_fix_report drops champion_patch/eval in FixReport and writes Markdown instead of JSON when format='json'"""
+28 | …sert (lambda td: (__import__('src.bugarena.server'…)[1])(Path(__import__('tempfile').mkdtemp())) == T…
+   |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^…^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+PLC3002 Lambda expression called directly. Execute the expression inline instead.
+  --> bug_report\evidence\repro\BUG-016_repro.py:28:635
+   |
+26 | …
+27 | …
+28 | …')), (lambda r: (r['report']['champion_patch'] is not None and r['report']['champion_eval'] is not None and Path(r['report_file_path']).read_text(encoding='utf-8').lstrip().startswith('{')))(generate_fix_report('t_b16', format='json', output_file=str(td / 'out.json'))), __i…
+   |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+F401 [*] `pytest` imported but unused
+  --> bug_report\evidence\repro\BUG-017_repro.py:9:8
+   |
+ 7 | from pathlib import Path
+ 8 |
+ 9 | import pytest
+   |        ^^^^^^
+10 |
+11 | # Ensure workspace root is in sys.path
+   |
+help: Remove unused import: `pytest`
+  |
+8 |
+  - import pytest
+9 |
+  |
+
+PLC3002 Lambda expression called directly. Execute the expression inline instead.
+  --> bug_report\evidence\repro\BUG-017_repro.py:28:12
+   |
+26 | …st_reproduction_generate_bug_report():
+27 | …"Reproduce defect: generate_bug_report never links _REPRO_REGISTRY entries because it compares relative test_file_path to absolute repo_path"""
+28 | …sert (lambda td: ((td / 'src').mkdir(), (td / 'src…)[3])(Path(__import__('tempfile').mkdtemp())) == T…
+   |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^…^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+F401 [*] `pytest` imported but unused
+  --> bug_report\evidence\repro\BUG-018_repro.py:9:8
+   |
+ 7 | from pathlib import Path
+ 8 |
+ 9 | import pytest
+   |        ^^^^^^
+10 |
+11 | # Ensure workspace root is in sys.path
+   |
+help: Remove unused import: `pytest`
+  |
+8 |
+  - import pytest
+9 |
+  |
+
+PLC3002 Lambda expression called directly. Execute the expression inline instead.
+  --> bug_report\evidence\repro\BUG-018_repro.py:28:12
+   |
+26 | …st_reproduction_bug_reproduce():
+27 | …"Reproduce defect: bug_reproduce returns stderr only as failure_output, omitting pytest stdout failure tracebacks, and evaluate_patches keeps stale repro_spec"""
+28 | …sert (lambda td: ((td / 'src').mkdir(), (td / 'src…)[2])(Path(__import__('tempfile').mkdtemp())) == T…
+   |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^…^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+F401 [*] `pytest` imported but unused
+  --> bug_report\evidence\repro\BUG-019_repro.py:9:8
+   |
+ 7 | from pathlib import Path
+ 8 |
+ 9 | import pytest
+   |        ^^^^^^
+10 |
+11 | # Ensure workspace root is in sys.path
+   |
+help: Remove unused import: `pytest`
+  |
+8 |
+  - import pytest
+9 |
+  |
+
+F401 [*] `pytest` imported but unused
+  --> bug_report\evidence\repro\BUG-020_repro.py:9:8
+   |
+ 7 | from pathlib import Path
+ 8 |
+ 9 | import pytest
+   |        ^^^^^^
+10 |
+11 | # Ensure workspace root is in sys.path
+   |
+help: Remove unused import: `pytest`
+  |
+8 |
+  - import pytest
+9 |
+  |
+
+F401 [*] `pytest` imported but unused
+  --> bug_report\evidence\repro\BUG-021_repro.py:9:8
+   |
+ 7 | from pathlib import Path
+ 8 |
+ 9 | import pytest
+   |        ^^^^^^
+10 |
+11 | # Ensure workspace root is in sys.path
+   |
+help: Remove unused import: `pytest`
+  |
+8 |
+  - import pytest
+9 |
+  |
+
+PLC3002 Lambda expression called directly. Execute the expression inline instead.
+  --> bug_report\evidence\repro\BUG-021_repro.py:28:12
+   |
+26 | …st_reproduction_load_env_file():
+27 | …"Reproduce defect: load_env_file fails to strip inline '#' comments and mishandles explicit dotenv_path scope"""
+28 | …sert (lambda td: ((td / '.env').write_text('BA_PROBE_CFG_KEY=hello # comment\n', encoding='utf-8'), load_env_file(td / '.env'), os.environ.pop('BA_PROBE_CFG_KEY', None), __import__('shutil').rmtree(td, ignore_errors=True))[2])(Path(__import__('tempfile').mkdtemp())) == '…
+   |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Found 41 errors.
+[*] 25 fixable with `--fix` (1 unsafe fix available with `--fix --unsafe-fixes`).
+ruff exit_code: 1
+
+--- pytest -q --tb=short ---
+...........................................                              [100%]
+43 passed in 20.61s
+pytest exit_code: 0

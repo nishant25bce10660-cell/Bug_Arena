@@ -1,0 +1,19 @@
+$ python -m pytest tests/repro/test_bug-005.py -q
+EXIT: 1
+F                                                                        [100%]
+================================== FAILURES ===================================
+__________________ test_reproduction_EphemeralSandboxManager __________________
+
+    def test_reproduction_EphemeralSandboxManager():
+        """Reproduce defect: EphemeralSandboxManager.apply_patch wipes file when deleting a line starting with '-- ' ('--- ' in unified diff)"""
+>       assert (lambda td: ((td / 'q.sql').write_text('-- old\nSELECT 1;\n', encoding='utf-8'), EphemeralSandboxManager(td).apply_patch(td, '--- a/q.sql\n+++ b/q.sql\n@@ -1,2 +1,1 @@\n--- old\n SELECT 1;\n'), (td / 'q.sql').read_text(encoding='utf-8'), __import__('shutil').rmtree(td, ignore_errors=True))[2])(Path(tempfile.mkdtemp())) == 'SELECT 1;\n'
+E       AssertionError: assert '' == 'SELECT 1;\n'
+E         
+E         - SELECT 1;
+
+tests\repro\test_bug-005.py:28: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/repro/test_bug-005.py::test_reproduction_EphemeralSandboxManager
+1 failed in 0.82s
+
+

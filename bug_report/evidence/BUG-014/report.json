@@ -1,0 +1,59 @@
+{
+  "tournament_id": "tourn_72b64aa3",
+  "champion_candidate_id": "cand_bug014_defensive",
+  "evaluations": [
+    {
+      "candidate_id": "cand_bug014_defensive",
+      "persona": "defensive_guardian",
+      "repro_passed": true,
+      "regressions_count": 0,
+      "total_regressions_checked": 1,
+      "diff_churn": 9,
+      "cyclomatic_delta": 0,
+      "mutation_kill_ratio": null,
+      "score": 97.3,
+      "disqualified": false,
+      "disqualification_reason": null
+    },
+    {
+      "candidate_id": "cand_bug014_contract",
+      "persona": "contract_enforcer",
+      "repro_passed": true,
+      "regressions_count": 0,
+      "total_regressions_checked": 1,
+      "diff_churn": 9,
+      "cyclomatic_delta": 0,
+      "mutation_kill_ratio": null,
+      "score": 97.3,
+      "disqualified": false,
+      "disqualification_reason": null
+    },
+    {
+      "candidate_id": "cand_bug014_surgical",
+      "persona": "surgical_minimalist",
+      "repro_passed": true,
+      "regressions_count": 0,
+      "total_regressions_checked": 1,
+      "diff_churn": 12,
+      "cyclomatic_delta": 0,
+      "mutation_kill_ratio": null,
+      "score": 96.4,
+      "disqualified": false,
+      "disqualification_reason": null
+    },
+    {
+      "candidate_id": "cand_bug014_architectural",
+      "persona": "architectural_fixer",
+      "repro_passed": true,
+      "regressions_count": 0,
+      "total_regressions_checked": 1,
+      "diff_churn": 22,
+      "cyclomatic_delta": 0,
+      "mutation_kill_ratio": null,
+      "score": 93.4,
+      "disqualified": false,
+      "disqualification_reason": null
+    }
+  ],
+  "champion_diff": "--- a/src/bugarena/discovery/log_parser.py\n+++ b/src/bugarena/discovery/log_parser.py\n@@ -7,3 +7,3 @@\n FRAME_PATTERN = re.compile(\n-    r'File\\s+[\"\\'](?P<file>[^\"\\']+)[\"\\'],\\s+line\\s+(?P<line>\\d+)(?:,\\s+in\\s+(?P<func>\\w+))?',\n+    r'File\\s+[\"\\'](?P<file>[^\"\\']+)[\"\\'],\\s+line\\s+(?P<line>\\d+)(?:,\\s+in\\s+(?P<func><[^>]+>|[\\w.]+))?',\n     re.IGNORECASE,\n@@ -12,3 +12,3 @@\n EXCEPTION_PATTERN = re.compile(\n-    r\"^(?P<type>[a-zA-Z_]\\w*(?:Error|Exception|Warning|Fault|Interrupt)?):\\s*(?P<msg>.*)$\",\n+    r\"^(?P<type>[a-zA-Z_]\\w*(?:Error|Exception|Warning|Fault|Interrupt|Exit)):\\s*(?P<msg>.*)$\",\n     re.MULTILINE,\n@@ -31,6 +31,3 @@\n         line_clean = line.strip()\n-        if not line_clean:\n-            continue\n-        exc_match = EXCEPTION_PATTERN.match(line_clean)\n-        if exc_match or \":\" in line_clean and not line_clean.startswith(\"File \"):\n+        if line_clean and EXCEPTION_PATTERN.match(line_clean):\n             error_message = line_clean"
+}

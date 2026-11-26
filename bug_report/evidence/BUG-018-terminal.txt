@@ -1,0 +1,22 @@
+$ python -m pytest tests/repro/test_bug-018.py -q
+EXIT: 1
+F                                                                        [100%]
+================================== FAILURES ===================================
+_______________________ test_reproduction_bug_reproduce _______________________
+
+    def test_reproduction_bug_reproduce():
+        """Reproduce defect: bug_reproduce returns stderr only as failure_output, omitting pytest stdout failure tracebacks, and evaluate_patches keeps stale repro_spec"""
+>       assert (lambda td: ((td / 'src').mkdir(), (td / 'src' / 'c.py').write_text('def f():\n return 1/0\n'), ('ZeroDivisionError' in bug_reproduce(str(td), 'src/c.py', 'div zero', 'f', 'f()', 'f() == 0')['failure_output']), __import__('shutil').rmtree(td, ignore_errors=True))[2])(Path(__import__('tempfile').mkdtemp())) == True
+E       AssertionError: assert False == True
+E        +  where False = <function test_reproduction_bug_reproduce.<locals>.<lambda> at 0x000002F0B7EBD850>(WindowsPath('C:[REDACTED_PATH]/AppData/Local/Temp/tmpu80bc7hd'))
+E        +    where WindowsPath('C:[REDACTED_PATH]/AppData/Local/Temp/tmpu80bc7hd') = Path('C:\\Users\\nisha\\AppData\\Local\\Temp\\tmpu80bc7hd')
+E        +      where 'C:\\Users\\nisha\\AppData\\Local\\Temp\\tmpu80bc7hd' = <function mkdtemp at 0x000002F0B2A78A90>()
+E        +        where <function mkdtemp at 0x000002F0B2A78A90> = <module 'tempfile' from 'C:\\Users\\nisha\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\tempfile.py'>.mkdtemp
+E        +          where <module 'tempfile' from 'C:\\Users\\nisha\\AppData\\Local\\Programs\\Python\\Python314\\Lib\\tempfile.py'> = __import__('tempfile')
+
+tests\repro\test_bug-018.py:28: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/repro/test_bug-018.py::test_reproduction_bug_reproduce - Asserti...
+1 failed in 3.73s
+
+

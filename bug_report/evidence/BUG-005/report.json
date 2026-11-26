@@ -1,0 +1,59 @@
+{
+  "tournament_id": "tourn_0bcee184",
+  "champion_candidate_id": "cand_bug005_surgical",
+  "evaluations": [
+    {
+      "candidate_id": "cand_bug005_surgical",
+      "persona": "surgical_minimalist",
+      "repro_passed": true,
+      "regressions_count": 0,
+      "total_regressions_checked": 1,
+      "diff_churn": 8,
+      "cyclomatic_delta": 0,
+      "mutation_kill_ratio": null,
+      "score": 97.6,
+      "disqualified": false,
+      "disqualification_reason": null
+    },
+    {
+      "candidate_id": "cand_bug005_contract",
+      "persona": "contract_enforcer",
+      "repro_passed": true,
+      "regressions_count": 0,
+      "total_regressions_checked": 1,
+      "diff_churn": 20,
+      "cyclomatic_delta": 0,
+      "mutation_kill_ratio": null,
+      "score": 94.0,
+      "disqualified": false,
+      "disqualification_reason": null
+    },
+    {
+      "candidate_id": "cand_bug005_defensive",
+      "persona": "defensive_guardian",
+      "repro_passed": true,
+      "regressions_count": 0,
+      "total_regressions_checked": 1,
+      "diff_churn": 23,
+      "cyclomatic_delta": 0,
+      "mutation_kill_ratio": null,
+      "score": 93.1,
+      "disqualified": false,
+      "disqualification_reason": null
+    },
+    {
+      "candidate_id": "cand_bug005_architectural",
+      "persona": "architectural_fixer",
+      "repro_passed": true,
+      "regressions_count": 0,
+      "total_regressions_checked": 1,
+      "diff_churn": 31,
+      "cyclomatic_delta": 0,
+      "mutation_kill_ratio": null,
+      "score": 90.7,
+      "disqualified": false,
+      "disqualification_reason": null
+    }
+  ],
+  "champion_diff": "--- a/src/bugarena/sandbox/manager.py\n+++ b/src/bugarena/sandbox/manager.py\n@@ -77,3 +77,3 @@\n             line = lines[i]\n-            if line.startswith((\"--- a/\", \"--- \")):\n+            if line.startswith(\"--- \") and i + 1 < len(lines) and lines[i + 1].startswith(\"+++ \"):\n                 # Next line should be +++ b/path\n@@ -81,3 +81,3 @@\n                 if i + 1 < len(lines) and lines[i + 1].startswith(\"+++ \"):\n-                    target_rel = lines[i + 1][4:].strip()\n+                    target_rel = lines[i + 1][4:].split(\"\\t\", 1)[0].strip()\n                     target_rel = target_rel.removeprefix(\"b/\")\n@@ -101,3 +101,3 @@\n                 while i < len(lines) and not (\n-                    lines[i].startswith(\"--- a/\") or lines[i].startswith(\"--- \")\n+                    lines[i].startswith(\"--- \") and i + 1 < len(lines) and lines[i + 1].startswith(\"+++ \")\n                 ):\n@@ -110,3 +110,3 @@\n                             and not lines[i].startswith(\"@@\")\n-                            and not lines[i].startswith(\"--- \")\n+                            and not (lines[i].startswith(\"--- \") and i + 1 < len(lines) and lines[i + 1].startswith(\"+++ \"))\n                         ):"
+}

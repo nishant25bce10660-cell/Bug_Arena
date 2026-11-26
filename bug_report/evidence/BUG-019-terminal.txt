@@ -1,0 +1,18 @@
+$ python -m pytest tests/repro/test_bug-019.py -q
+EXIT: 1
+F                                                                        [100%]
+================================== FAILURES ===================================
+___________________ test_reproduction_scrub_sensitive_data ____________________
+
+    def test_reproduction_scrub_sensitive_data():
+        """Reproduce defect: scrub_sensitive_data breaks [WORKSPACE] replacement on Windows user temp paths and validate_safe_path accepts '.'"""
+>       assert ('[WORKSPACE]' in scrub_sensitive_data('Error at C:\\Users\\alice\\AppData\\Local\\Temp\\sb\\a.py', base_dir='C:\\Users\\alice\\AppData\\Local\\Temp\\sb')) == True
+E       AssertionError: assert ('[WORKSPACE]' in 'Error at [REDACTED_PATH]\\AppData\\Local\\Temp\\sb\\a.py') == True
+E        +  where 'Error at [REDACTED_PATH]\\AppData\\Local\\Temp\\sb\\a.py' = scrub_sensitive_data('Error at C:\\Users\\alice\\AppData\\Local\\Temp\\sb\\a.py', base_dir='C:\\Users\\alice\\AppData\\Local\\Temp\\sb')
+
+tests\repro\test_bug-019.py:28: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/repro/test_bug-019.py::test_reproduction_scrub_sensitive_data - ...
+1 failed in 0.23s
+
+

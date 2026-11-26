@@ -1,0 +1,8 @@
+--- a/src/bugarena/synthesizer/test_generator.py
++++ b/src/bugarena/synthesizer/test_generator.py
+@@ -42,2 +42,3 @@
+-    elif expected_behavior and ("==" in expected_behavior or "assert" in expected_behavior):
+-        assertion_block = f"    assert {expected_behavior}\n"
++    elif expected_behavior and any(op in expected_behavior for op in ("==", "!=", "<", ">", " in ", " is ", "assert")):
++        expr = expected_behavior.strip().removeprefix("assert ").strip()
++        assertion_block = f"    assert {expr}\n"

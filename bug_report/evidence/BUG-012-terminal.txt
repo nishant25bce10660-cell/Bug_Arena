@@ -1,0 +1,20 @@
+$ python -m pytest tests/repro/test_bug-012.py -q
+EXIT: 1
+F                                                                        [100%]
+================================== FAILURES ===================================
+_____________________ test_reproduction_TournamentRunner ______________________
+
+    def test_reproduction_TournamentRunner():
+        """Reproduce defect: TournamentRunner omits PersonaType.CONTRACT_ENFORCER from default personas and overrides explicit empty sequence"""
+>       assert (PersonaType.CONTRACT_ENFORCER in TournamentRunner().personas and len(TournamentRunner(personas=[]).personas) == 0) == True
+E       AssertionError: assert ((<PersonaType.CONTRACT_ENFORCER: 'contract_enforcer'> in [<PersonaType.SURGICAL_MINIMALIST: 'surgical_minimalist'>, <PersonaType.DEFENSIVE_GUARDIAN: 'defensive_guardian'>, <PersonaType.ARCHITECTURAL_FIXER: 'architectural_fixer'>])) == True
+E        +  where <PersonaType.CONTRACT_ENFORCER: 'contract_enforcer'> = PersonaType.CONTRACT_ENFORCER
+E        +  and   [<PersonaType.SURGICAL_MINIMALIST: 'surgical_minimalist'>, <PersonaType.DEFENSIVE_GUARDIAN: 'defensive_guardian'>, <PersonaType.ARCHITECTURAL_FIXER: 'architectural_fixer'>] = <src.bugarena.tournament.runner.TournamentRunner object at 0x0000026FE742DBE0>.personas
+E        +    where <src.bugarena.tournament.runner.TournamentRunner object at 0x0000026FE742DBE0> = TournamentRunner()
+
+tests\repro\test_bug-012.py:28: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/repro/test_bug-012.py::test_reproduction_TournamentRunner - Asse...
+1 failed in 1.08s
+
+
